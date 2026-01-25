@@ -320,6 +320,22 @@ python -m src.agent.cli --query "帮我总结一下最近的独家科技新闻"
 - [ ] Agent 多轮对话记忆
 - [ ] 更多 Agent 工具 (趋势分析、对比分析)
 
+## 定时任务
+
+Windows 任务计划程序脚本: `scripts/schedule_pipeline.ps1`
+
+```powershell
+# 设置每天早上8点运行
+.\scripts\schedule_pipeline.ps1
+
+# 自定义时间
+.\scripts\schedule_pipeline.ps1 -Hour 9 -Minute 30
+
+# 查看/删除
+.\scripts\schedule_pipeline.ps1 -Status
+.\scripts\schedule_pipeline.ps1 -Remove
+```
+
 ## 环境要求
 
 - Python 3.10+

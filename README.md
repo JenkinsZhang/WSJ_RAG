@@ -322,6 +322,31 @@ WSJRAG/
 
 ---
 
+## 定时任务 (Windows)
+
+使用 PowerShell 脚本设置 Windows 任务计划程序自动运行 pipeline：
+
+```powershell
+# 以管理员身份运行 PowerShell
+
+# 设置每天早上8点运行
+.\scripts\schedule_pipeline.ps1
+
+# 自定义时间和分类
+.\scripts\schedule_pipeline.ps1 -Hour 9 -Minute 30 -Categories "tech,finance"
+
+# 查看任务状态
+.\scripts\schedule_pipeline.ps1 -Status
+
+# 删除任务
+.\scripts\schedule_pipeline.ps1 -Remove
+
+# 手动触发运行
+schtasks /run /tn "WSJ-RAG-Pipeline"
+```
+
+---
+
 ## 常见问题
 
 ### Q: 爬虫无法登录 WSJ？

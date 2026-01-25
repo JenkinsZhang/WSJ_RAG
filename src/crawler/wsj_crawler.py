@@ -59,6 +59,7 @@ PAGES_TO_CRAWL = {
 
 # 每页最大文章数
 MAX_ARTICLES_PER_PAGE = 20
+MAX_ARTICLES_HOME = 50  # 首页允许更多文章
 
 
 # ============== 数据结构 ==============
@@ -493,8 +494,9 @@ class WSJCrawler:
         new_links = [l for l in links if self._normalize_url(l.url) not in self._crawled_urls]
         logger.info(f"新文章: {len(new_links)}/{len(links)}")
 
-        # 限制数量
-        links_to_crawl = new_links[:MAX_ARTICLES_PER_PAGE]
+        # 限制数量 (首页允许更多)
+        max_articles = MAX_ARTICLES_HOME if category == "home" else MAX_ARTICLES_PER_PAGE
+        links_to_crawl = new_links[:max_articles]
 
         # 爬取每篇文章
         articles = []
