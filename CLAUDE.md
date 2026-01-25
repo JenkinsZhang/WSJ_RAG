@@ -44,7 +44,9 @@ WSJRAG/
 │   │   ├── date_parser.py      # WSJ 时间格式解析
 │   │   ├── state.py            # indexed_files.json 管理
 │   │   └── pipeline.py         # 索引主流程
-│   └── utils/text.py           # 文本分块器
+│   └── utils/
+│       ├── text.py             # 文本分块器
+│       └── url.py              # URL 标准化
 ├── articles/                   # 爬取的文章 (按分类/日期组织)
 ├── data/
 │   ├── crawled_urls.json       # 爬虫URL去重
@@ -70,6 +72,11 @@ WSJRAG/
 - 启动时自动检查索引是否存在
 - 索引不存在 → 创建完整索引
 - 索引存在 → 检测并添加缺失字段 (不丢失数据)
+
+**Document ID 生成:**
+- `article_id` = MD5(normalize_url(url))
+- `chunk_id` = `{article_id}_{chunk_index}`
+- URL 标准化: 移除查询参数(?mod=nav)、片段(#section)、末尾斜杠
 
 ### 3. 数据处理流水线
 

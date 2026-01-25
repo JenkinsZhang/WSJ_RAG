@@ -209,7 +209,9 @@ WSJRAG/
 │   │   ├── loader.py            # 文章加载器
 │   │   ├── state.py             # 索引状态管理
 │   │   └── pipeline.py          # 索引流水线
-│   └── utils/text.py            # 文本处理
+│   └── utils/
+│       ├── text.py              # 文本分块
+│       └── url.py               # URL 标准化
 ├── examples/
 │   ├── run_indexer.py           # 索引脚本
 │   └── demo_pipeline.py         # 演示脚本
@@ -278,6 +280,15 @@ curl http://localhost:9200
 
 # Docker 启动
 docker run -d -p 9200:9200 -e "discovery.type=single-node" opensearchproject/opensearch:latest
+```
+
+### Q: 同一篇文章会被重复索引吗？
+
+不会。系统使用 URL 生成唯一 ID，并且会自动标准化 URL（移除查询参数如 `?mod=nav`），确保同一篇文章无论从哪个入口访问都会生成相同的 ID。
+
+```
+https://wsj.com/tech/article?mod=nav     → ID: abc123
+https://wsj.com/tech/article?mod=search  → ID: abc123 (相同)
 ```
 
 ### Q: 如何重新索引所有文章？
