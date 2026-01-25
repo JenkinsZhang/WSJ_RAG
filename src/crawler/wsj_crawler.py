@@ -459,14 +459,19 @@ class WSJCrawler:
             elif is_exclusive:
                 logger.info("    [EXCLUSIVE] 独家报道")
 
+            # Category 从 URL 推断，而不是使用爬取来源
+            article_url = normalize_url(link.url)
+            inferred_category = self._infer_category_from_url(article_url)
+            logger.info(f"    分类: {inferred_category}")
+
             return Article(
                 title=title,
-                url=normalize_url(link.url),  # 清理URL参数
+                url=article_url,
                 content=data['content'],
                 author=data['author'] or None,
                 published_at=data['published_at'] or None,
                 subtitle=data['subtitle'] or None,
-                category=category,
+                category=inferred_category,
                 is_exclusive=is_exclusive,
             )
 
@@ -663,25 +668,49 @@ class WSJCrawler:
             self.disconnect()
 
     def _infer_category_from_url(self, url: str) -> str:
-        """从 URL 推断文章分类"""
+        """
+        从 URL 推断文章分类
+
+        注意: 匹配顺序很重要，更具体的路径要先匹配
+        例如 /world/china 要先匹配 china，再匹配 world
+        """
         url_lower = url.lower()
 
-        category_patterns = {
-            "tech": ["/tech/", "/technology/"],
-            "finance": ["/finance/", "/markets/"],
-            "business": ["/business/"],
-            "politics": ["/politics/"],
-            "economy": ["/economy/"],
-            "world": ["/world/"],
-            "china": ["/china/"],
-        }
+        # 按优先级顺序匹配（更具体的先匹配）
+        # china 必须在 world 之前，因为 /world/china 应该匹配 china
+        if '/world/china' in url_lower or '/china/' in url_lower:
+            return 'china'
+        if '/tech/' in url_lower or '/technology/' in url_lower:
+            return 'tech'
+        if '/world/' in url_lower:
+            return 'world'
+        if '/finance/' in url_lower or '/markets/' in url_lower:
+            return 'finance'
+        if '/business/' in url_lower:
+            return 'business'
+        if '/politics/' in url_lower:
+            return 'politics'
+        if '/economy/' in url_lower:
+            return 'economy'
+        if '/arts-culture/' in url_lower or '/arts/' in url_lower or '/culture/' in url_lower:
+            return 'arts'
+        if '/lifestyle/' in url_lower:
+            return 'lifestyle'
+        if '/opinion/' in url_lower:
+            return 'opinion'
+        if '/us-news/' in url_lower:
+            return 'us-news'
+        if '/personal-finance/' in url_lower:
+            return 'personal-finance'
+        if '/sports/' in url_lower:
+            return 'sports'
+        if '/real-estate/' in url_lower:
+            return 'real-estate'
+        if '/articles/' in url_lower:
+            # 没有明确分类的 /articles/ 路径
+            return 'miscellaneous'
 
-        for category, patterns in category_patterns.items():
-            for pattern in patterns:
-                if pattern in url_lower:
-                    return category
-
-        return "uncategorized"
+        return 'uncategorized'
 
 
 # ============== 主函数 ==============
