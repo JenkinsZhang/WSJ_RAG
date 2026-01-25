@@ -14,8 +14,8 @@
 | 向量化 | qwen3-embedding-8b (LM Studio, 4096维) | ✅ 完成 |
 | 存储 | OpenSearch (localhost:9200) | ✅ 完成 |
 | 索引器 | ArticleIndexer | ✅ 完成 |
-| RAG | LlamaIndex | ⏳ 待开发 |
-| Agent | LangChain | ⏳ 待开发 |
+| RAG | LlamaIndex | ✅ 完成 |
+| Agent | LlamaIndex FunctionAgent | ✅ 完成 |
 | LLM | AWS Bedrock Claude (可切换本地模型) | ✅ 完成 |
 | API | FastAPI | ✅ 完成 |
 
@@ -219,13 +219,48 @@ python run_pipeline.py -v
 - 控制台: 带颜色的实时日志
 - 文件: `logs/pipeline_YYYYMMDD_HHMMSS.log`
 
+### 8. Agent 模块 (LlamaIndex)
+
+基于 LlamaIndex FunctionAgent 的新闻问答 Agent。
+
+**组件:**
+- `tools.py`: NewsQueryTool - 支持语义/混合/时间搜索
+- `news_agent.py`: NewsAgent - LlamaIndex FunctionAgent 封装
+- `cli.py`: 命令行交互界面
+
+**使用方法:**
+```bash
+# 交互模式
+python -m src.agent.cli
+
+# 详细模式 (显示 agent 推理过程)
+python -m src.agent.cli --verbose
+
+# 单次查询模式
+python -m src.agent.cli --query "What's the latest on AI?"
+```
+
+**NewsQueryTool 参数:**
+| 参数 | 说明 |
+|------|------|
+| `query` | 搜索查询 |
+| `mode` | semantic / hybrid / recent |
+| `category` | 分类筛选 (tech, finance, etc.) |
+| `hours_ago` | 时间范围 (recent 模式) |
+| `max_results` | 最大结果数 (1-20) |
+
+**Agent 系统提示:**
+- 自动选择最佳搜索模式
+- 引用文章标题和 URL
+- 提供上下文分析
+
 ## 下一步开发
 
 ### TODO
 - [ ] 批量处理优化 (batch_size参数)
 - [ ] 本地LLM支持 (LLMService接口抽象)
-- [ ] LlamaIndex RAG集成
-- [ ] LangChain Agent
+- [ ] Agent 多轮对话记忆
+- [ ] 更多 Agent 工具 (新闻摘要、趋势分析)
 
 ## 环境要求
 

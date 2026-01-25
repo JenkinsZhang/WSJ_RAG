@@ -1,9 +1,26 @@
 """
 Agent module for WSJ RAG system.
 
-Provides RAG and agent capabilities:
-    - RAG (Retrieval-Augmented Generation)
-    - LangChain Agent integration
+Provides LlamaIndex-based agents for news Q&A:
+    - NewsAgent: Main agent for answering news-related questions
+    - NewsQueryTool: Custom tool for searching news articles
 """
 
-__all__ = []
+from src.agent.news_agent import NewsAgent, get_news_agent
+from src.agent.tools import (
+    NewsQueryTool,
+    NewsQueryResult,
+    SearchMode,
+    get_news_query_tool,
+    create_news_query_function_tool,
+)
+
+__all__ = [
+    "NewsAgent",
+    "get_news_agent",
+    "NewsQueryTool",
+    "NewsQueryResult",
+    "SearchMode",
+    "get_news_query_tool",
+    "create_news_query_function_tool",
+]

@@ -186,6 +186,35 @@ curl -X POST http://localhost:8000/search \
 
 ---
 
+### 新闻问答 Agent (CLI)
+
+基于 LlamaIndex 的交互式新闻问答 Agent。
+
+```bash
+# 交互模式
+python -m src.agent.cli
+
+# 显示 agent 推理过程
+python -m src.agent.cli --verbose
+
+# 单次查询
+python -m src.agent.cli --query "What's the latest on AI regulations?"
+```
+
+**功能:**
+- 自然语言新闻查询
+- 自动选择最佳搜索策略 (语义/混合/时间)
+- 引用来源和 URL
+- 多轮对话
+
+**示例问题:**
+- "What's the latest news about AI?"
+- "Summarize recent tech news from the past 24 hours"
+- "What's happening with Federal Reserve interest rates?"
+- "Find news about Tesla earnings"
+
+---
+
 ## 项目结构
 
 ```
@@ -195,13 +224,13 @@ WSJRAG/
 ├── src/
 │   ├── config/settings.py       # 配置管理
 │   ├── models/document.py       # 数据模型
+│   ├── clients/                 # 外部服务客户端
+│   │   ├── opensearch.py        # OpenSearch 客户端
+│   │   ├── embedding.py         # Embedding 服务
+│   │   └── llm.py               # LLM 服务 (Bedrock)
 │   ├── storage/
 │   │   ├── schema.py            # OpenSearch 索引设计
-│   │   ├── client.py            # OpenSearch 客户端
 │   │   └── repository.py        # 数据访问层
-│   ├── services/
-│   │   ├── embedding.py         # Embedding 服务
-│   │   └── llm.py               # LLM 服务
 │   ├── crawler/
 │   │   ├── browser.py           # Playwright 浏览器
 │   │   └── wsj_crawler.py       # WSJ 爬虫
@@ -209,6 +238,10 @@ WSJRAG/
 │   │   ├── loader.py            # 文章加载器
 │   │   ├── state.py             # 索引状态管理
 │   │   └── pipeline.py          # 索引流水线
+│   ├── agent/                   # LlamaIndex Agent
+│   │   ├── tools.py             # NewsQueryTool
+│   │   ├── news_agent.py        # FunctionAgent 封装
+│   │   └── cli.py               # 命令行交互
 │   └── utils/
 │       ├── text.py              # 文本分块
 │       └── url.py               # URL 标准化
