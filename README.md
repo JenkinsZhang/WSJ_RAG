@@ -110,11 +110,15 @@ python run_pipeline.py -v
 ### 单独运行爬虫
 
 ```bash
-# 爬取所有分类
+# 显示帮助和可用分类
 python -m src.crawler.wsj_crawler
 
+# 爬取所有分类
+python -m src.crawler.wsj_crawler all
+
 # 爬取单个分类
-python -m src.crawler.wsj_crawler --category tech
+python -m src.crawler.wsj_crawler tech
+python -m src.crawler.wsj_crawler china
 ```
 
 **注意**: 首次运行需要手动登录 WSJ 账号，登录状态会保存在 Chrome profile 中。

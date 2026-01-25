@@ -112,6 +112,7 @@ articles/**/*.json (爬取的文章)
 **已实现功能:**
 - Playwright 持久化浏览器 (保存登录状态)
 - 8个分类爬取: home, world, china, tech, finance, business, politics, economy
+- 用法: `python -m src.crawler.wsj_crawler <category|all>`
 - URL去重 (crawled_urls.json)
 - 文章内容提取: 标题、副标题、作者、发布时间、正文
 - EXCLUSIVE 文章优先级排序
