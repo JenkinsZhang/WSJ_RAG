@@ -1,0 +1,7 @@
+# Force CRLF line endings for Windows
+* text=auto eol=crlf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary
