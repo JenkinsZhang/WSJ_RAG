@@ -28,20 +28,16 @@ logger = logging.getLogger(__name__)
 
 # ===== Prompt Templates =====
 
-CHUNK_SUMMARY_PROMPT = """请用1-2句中文简洁总结以下新闻片段的核心内容：
+CHUNK_SUMMARY_PROMPT = """Summarize the following news excerpt in 1-2 concise sentences. Output only the summary, nothing else.
 
-{text}
+{text}"""
 
-总结："""
+ARTICLE_SUMMARY_PROMPT = """Summarize the following news article in 3-5 sentences, covering key events, entities involved, and potential implications. Output only the summary, nothing else.
 
-ARTICLE_SUMMARY_PROMPT = """请用3-5句中文总结以下新闻文章的主要内容，包括关键事件、涉及的人物/机构、以及可能的影响：
+Title: {title}
 
-标题：{title}
-
-内容：
-{content}
-
-总结："""
+Content:
+{content}"""
 
 
 class LLMService:
