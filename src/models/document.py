@@ -177,6 +177,7 @@ class SearchResult:
         category: Article category
         score: Search relevance score (higher is better)
         published_at: Publication timestamp
+        is_exclusive: Whether this is an exclusive article
 
     Note:
         SearchResult is immutable (frozen=True) to ensure results
@@ -194,6 +195,7 @@ class SearchResult:
     score: float
     category: Optional[str] = None
     published_at: Optional[str] = None
+    is_exclusive: bool = False
 
     @classmethod
     def from_opensearch_hit(cls, hit: dict) -> SearchResult:
@@ -223,4 +225,5 @@ class SearchResult:
             category=source.get("category"),
             score=hit.get("_score", 0.0),
             published_at=source.get("published_at"),
+            is_exclusive=source.get("is_exclusive", False),
         )

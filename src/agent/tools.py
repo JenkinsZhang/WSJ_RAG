@@ -5,14 +5,16 @@ Provides sophisticated news search capabilities including:
     - Semantic search using vector embeddings
     - Hybrid search (semantic + keyword)
     - Time-based filtering
-    - Category filtering
-    - Query preprocessing (translation + time context)
+    - Category and exclusive filtering
+    - Intelligent query analysis (translation, intent detection)
+    - Automatic result summarization
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -27,39 +29,87 @@ from src.storage.repository import NewsRepository
 logger = logging.getLogger(__name__)
 
 
-# ===== Query Preprocessing =====
+# ===== Query Analysis =====
 
-QUERY_REWRITE_PROMPT = """You are a query preprocessor for a news search system. Your task is to:
-1. If the query is in Chinese or any non-English language, translate it to English
-2. Rewrite the query to be more search-friendly
-3. Add temporal context if relevant
+QUERY_ANALYSIS_PROMPT = """You are a query analyzer for a WSJ news search system. Analyze the user's query and extract structured information.
 
 Current date and time: {current_time}
 
 User query: {query}
 
-Output ONLY the rewritten English query, nothing else. Keep it concise (under 50 words).
-If the query mentions "recent", "latest", "today", "this week", etc., incorporate the current date context.
+Analyze the query and output a JSON object with the following fields:
+- search_query: The query translated to English, optimized for search. Add date context if the query mentions "recent", "latest", "today", etc.
+- mode: One of "hybrid" (default, best for most queries), "semantic" (for conceptual questions), or "recent" (for time-based retrieval)
+- exclusive_only: true if user specifically asks for exclusive/独家 news, false otherwise
+- needs_summary: true if user asks to summarize/总结/概括 the results, false otherwise
+- category: One of [home, world, china, tech, finance, business, politics, economy] if mentioned, null otherwise
+- hours_ago: Number of hours to look back if time is mentioned (e.g., "today"=24, "this week"=168), null otherwise
+
+Output ONLY valid JSON, no other text.
 
 Examples:
-- "最近特斯拉的新闻" -> "Tesla news and updates January 2026"
-- "trump policy" -> "Trump administration policy updates January 2026"
-- "AI regulations" -> "artificial intelligence AI regulations policy"
+Query: "帮我总结一下最近的独家科技新闻"
+{{"search_query": "technology news January 2026", "mode": "recent", "exclusive_only": true, "needs_summary": true, "category": "tech", "hours_ago": 72}}
+
+Query: "What's happening with Tesla stock?"
+{{"search_query": "Tesla stock price market performance January 2026", "mode": "hybrid", "exclusive_only": false, "needs_summary": false, "category": "finance", "hours_ago": null}}
+
+Query: "给我看看今天的独家新闻"
+{{"search_query": "exclusive news today January 25 2026", "mode": "recent", "exclusive_only": true, "needs_summary": false, "category": null, "hours_ago": 24}}
+
+Query: "AI对就业市场的影响"
+{{"search_query": "artificial intelligence AI impact on employment job market labor", "mode": "semantic", "exclusive_only": false, "needs_summary": false, "category": null, "hours_ago": null}}
 """
 
+SUMMARY_PROMPT = """请根据以下新闻文章内容，用中文给出一个简洁的综合总结。总结应该：
+1. 概括主要事件和关键信息
+2. 提及涉及的主要人物/公司/组织
+3. 简要说明影响或意义
 
-class QueryPreprocessor:
+新闻内容：
+{content}
+
+请用3-5句话总结以上新闻的核心内容："""
+
+
+@dataclass
+class QueryIntent:
+    """Structured intent extracted from user query."""
+
+    search_query: str
+    mode: str = "hybrid"
+    exclusive_only: bool = False
+    needs_summary: bool = False
+    category: Optional[str] = None
+    hours_ago: Optional[int] = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "QueryIntent":
+        """Create QueryIntent from dictionary."""
+        return cls(
+            search_query=data.get("search_query", ""),
+            mode=data.get("mode", "hybrid"),
+            exclusive_only=data.get("exclusive_only", False),
+            needs_summary=data.get("needs_summary", False),
+            category=data.get("category"),
+            hours_ago=data.get("hours_ago"),
+        )
+
+
+class QueryAnalyzer:
     """
-    Preprocesses user queries before embedding.
+    Analyzes user queries to extract structured intent.
 
     Handles:
         - Translation from any language to English
-        - Query rewriting for better search results
-        - Adding temporal context
+        - Search mode detection
+        - Exclusive news detection
+        - Summary request detection
+        - Category and time range extraction
     """
 
     def __init__(self, llm_service: Optional[LLMService] = None) -> None:
-        """Initialize the query preprocessor."""
+        """Initialize the query analyzer."""
         self._llm_service = llm_service
 
     @property
@@ -69,34 +119,86 @@ class QueryPreprocessor:
             self._llm_service = get_llm_service()
         return self._llm_service
 
-    def preprocess(self, query: str) -> str:
+    def analyze(self, query: str) -> QueryIntent:
         """
-        Preprocess a query for search.
-
-        Translates to English if needed and adds time context.
+        Analyze a query and extract structured intent.
 
         Args:
             query: Original user query (any language)
 
         Returns:
-            Preprocessed English query with time context
+            QueryIntent with extracted information
         """
         if not query or not query.strip():
-            return query
+            return QueryIntent(search_query=query)
 
         current_time = datetime.now().strftime("%B %d, %Y %H:%M")
-        prompt = QUERY_REWRITE_PROMPT.format(
+        prompt = QUERY_ANALYSIS_PROMPT.format(
             current_time=current_time,
             query=query,
         )
 
         try:
-            rewritten = self.llm_service.generate(prompt, max_tokens=100, temperature=0.1)
-            logger.info(f"Query preprocessed: '{query}' -> '{rewritten}'")
-            return rewritten
+            response = self.llm_service.generate(prompt, max_tokens=200, temperature=0.1)
+
+            # Parse JSON response
+            # Handle potential markdown code blocks
+            response = response.strip()
+            if response.startswith("```"):
+                response = response.split("\n", 1)[1]
+                response = response.rsplit("```", 1)[0]
+
+            intent_data = json.loads(response)
+            intent = QueryIntent.from_dict(intent_data)
+
+            logger.info(
+                f"Query analyzed: '{query[:50]}' -> "
+                f"mode={intent.mode}, exclusive={intent.exclusive_only}, "
+                f"summary={intent.needs_summary}, category={intent.category}"
+            )
+            return intent
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse query analysis JSON: {e}, using defaults")
+            return QueryIntent(search_query=query)
         except Exception as e:
-            logger.warning(f"Query preprocessing failed, using original: {e}")
-            return query
+            logger.warning(f"Query analysis failed: {e}, using defaults")
+            return QueryIntent(search_query=query)
+
+    def summarize_results(self, results: list["NewsQueryResult"]) -> str:
+        """
+        Generate a summary of search results.
+
+        Args:
+            results: List of news query results
+
+        Returns:
+            Chinese summary of the results
+        """
+        if not results:
+            return "没有找到相关新闻。"
+
+        # Combine content from results
+        content_parts = []
+        for i, r in enumerate(results, 1):
+            content_parts.append(f"[{i}] {r.title}")
+            if r.summary:
+                content_parts.append(f"摘要: {r.summary}")
+            if r.content:
+                preview = r.content[:500] if len(r.content) > 500 else r.content
+                content_parts.append(f"内容: {preview}")
+            content_parts.append("")
+
+        combined_content = "\n".join(content_parts)
+
+        prompt = SUMMARY_PROMPT.format(content=combined_content)
+
+        try:
+            summary = self.llm_service.generate(prompt, max_tokens=500, temperature=0.3)
+            return summary
+        except Exception as e:
+            logger.warning(f"Failed to generate summary: {e}")
+            return "无法生成总结。"
 
 
 class SearchMode(str, Enum):
@@ -118,6 +220,7 @@ class NewsQueryResult:
     category: Optional[str]
     published_at: Optional[str]
     score: float
+    is_exclusive: bool = False
 
     def to_text(self) -> str:
         """Convert to readable text format."""
@@ -127,8 +230,9 @@ class NewsQueryResult:
             if self.content and len(self.content) > 500
             else (self.content or "N/A")
         )
+        exclusive_tag = " [EXCLUSIVE]" if self.is_exclusive else ""
         parts = [
-            f"Title: {self.title or 'N/A'}",
+            f"Title: {self.title or 'N/A'}{exclusive_tag}",
             f"Category: {self.category or 'N/A'}",
             f"Published: {self.published_at or 'N/A'}",
             f"Summary: {self.summary or 'N/A'}",
@@ -149,30 +253,26 @@ class NewsQueryTool:
         - recent: Time-based retrieval with optional filters
 
     Features:
-        - Automatic query translation (Chinese -> English)
+        - Automatic query translation (any language -> English)
+        - Intent detection (exclusive news, summary requests)
         - Query rewriting with temporal context
-        - Multiple search strategies
+        - Automatic result summarization when requested
 
     Example:
         >>> tool = NewsQueryTool()
-        >>> results = tool.query(
-        ...     query="Federal Reserve interest rate decision",
-        ...     mode="hybrid",
-        ...     category="finance",
-        ...     max_results=5
-        ... )
+        >>> results = tool.query("帮我总结一下最近的独家科技新闻")
     """
 
     def __init__(
         self,
         embedding_service: Optional[EmbeddingService] = None,
         repository: Optional[NewsRepository] = None,
-        query_preprocessor: Optional[QueryPreprocessor] = None,
+        query_analyzer: Optional[QueryAnalyzer] = None,
     ) -> None:
         """Initialize the news query tool."""
         self._embedding_service = embedding_service
         self._repository = repository
-        self._query_preprocessor = query_preprocessor
+        self._query_analyzer = query_analyzer
 
     @property
     def embedding_service(self) -> EmbeddingService:
@@ -190,95 +290,94 @@ class NewsQueryTool:
         return self._repository
 
     @property
-    def query_preprocessor(self) -> QueryPreprocessor:
-        """Lazy initialization of query preprocessor."""
-        if self._query_preprocessor is None:
-            self._query_preprocessor = QueryPreprocessor()
-        return self._query_preprocessor
+    def query_analyzer(self) -> QueryAnalyzer:
+        """Lazy initialization of query analyzer."""
+        if self._query_analyzer is None:
+            self._query_analyzer = QueryAnalyzer()
+        return self._query_analyzer
 
     def query(
         self,
         query: str,
-        mode: str = "hybrid",
-        category: Optional[str] = None,
-        hours_ago: Optional[int] = None,
         max_results: int = 5,
     ) -> str:
         """
-        Query news articles with flexible search options.
+        Query news articles with intelligent intent detection.
 
-        This is the main entry point for the agent to search news.
-        It supports semantic search, hybrid search, and time-based queries.
+        This tool automatically:
+        - Translates queries from any language to English
+        - Detects if user wants exclusive news only
+        - Detects if user wants a summary of results
+        - Chooses the best search mode based on query content
+        - Adds temporal context when relevant
 
         Args:
-            query: The search query or question about news.
-                   For semantic/hybrid mode: describe what you're looking for.
-                   For recent mode: can be empty or used as additional filter.
-            mode: Search mode - one of:
-                  - "semantic": Pure vector similarity search, best for conceptual queries
-                  - "hybrid": Combined vector + keyword search, best for specific topics
-                  - "recent": Get latest news, optionally filtered by category
-            category: Filter by news category. Valid categories:
-                      home, world, china, tech, finance, business, politics, economy
-            hours_ago: For recent mode, limit to articles from last N hours.
-                       Default is 72 hours if not specified.
-            max_results: Maximum number of results to return (1-20).
+            query: The search query or question about news (any language).
+                   Can include requests like "总结", "独家", "最近" etc.
+            max_results: Maximum number of results to return (1-20, default 5).
 
         Returns:
             A formatted string containing the search results with titles,
-            summaries, content excerpts, and URLs. Returns a message if
-            no results found.
+            summaries, content excerpts, and URLs. If summary was requested,
+            includes a synthesized summary at the beginning.
 
         Examples:
-            - query("What's happening with AI regulations?", mode="hybrid")
-            - query("", mode="recent", category="tech", hours_ago=24)
-            - query("Federal Reserve monetary policy", mode="semantic", max_results=3)
+            - query("What's happening with AI?")
+            - query("帮我总结一下最近的独家科技新闻")
+            - query("Trump政策最新动态", max_results=10)
         """
         # Validate inputs
         max_results = max(1, min(20, max_results))
-        mode = mode.lower()
 
-        if mode not in ["semantic", "hybrid", "recent"]:
-            mode = "hybrid"
-
-        # Preprocess query: translate to English and add time context
-        original_query = query
-        if query.strip():
-            processed_query = self.query_preprocessor.preprocess(query)
-        else:
-            processed_query = query
+        # Analyze query to extract intent
+        intent = self.query_analyzer.analyze(query)
 
         logger.info(
-            f"News query: mode={mode}, original='{original_query[:50]}', "
-            f"processed='{processed_query[:50]}', category={category}"
+            f"News query: original='{query[:50]}', "
+            f"search='{intent.search_query[:50]}', mode={intent.mode}, "
+            f"exclusive={intent.exclusive_only}, summary={intent.needs_summary}"
         )
 
         try:
-            if mode == "recent":
+            # Execute search based on detected mode
+            if intent.mode == "recent":
                 results = self._search_recent(
-                    query=processed_query,
-                    category=category,
-                    hours_ago=hours_ago or 72,
+                    query=intent.search_query,
+                    category=intent.category,
+                    hours_ago=intent.hours_ago or 72,
                     limit=max_results,
+                    exclusive_only=intent.exclusive_only,
                 )
-            elif mode == "semantic":
+            elif intent.mode == "semantic":
                 results = self._search_semantic(
-                    query=processed_query,
-                    category=category,
+                    query=intent.search_query,
+                    category=intent.category,
                     k=max_results,
+                    exclusive_only=intent.exclusive_only,
                 )
-            else:  # hybrid
+            else:  # hybrid (default)
                 results = self._search_hybrid(
-                    query=processed_query,
-                    category=category,
+                    query=intent.search_query,
+                    category=intent.category,
                     k=max_results,
+                    exclusive_only=intent.exclusive_only,
                 )
 
             if not results:
-                return f"No news articles found for query: '{query}' with mode: {mode}"
+                return f"No news articles found for query: '{query}'"
 
-            # Format results
-            output_parts = [f"Found {len(results)} relevant articles:\n"]
+            # Build output
+            output_parts = []
+
+            # Add summary if requested
+            if intent.needs_summary:
+                summary = self.query_analyzer.summarize_results(results)
+                output_parts.append("=== 新闻总结 ===")
+                output_parts.append(summary)
+                output_parts.append("")
+                output_parts.append("=== 详细文章 ===")
+
+            output_parts.append(f"Found {len(results)} relevant articles:\n")
             for i, result in enumerate(results, 1):
                 output_parts.append(f"--- Article {i} ---")
                 output_parts.append(result.to_text())
@@ -295,6 +394,7 @@ class NewsQueryTool:
         query: str,
         category: Optional[str],
         k: int,
+        exclusive_only: bool = False,
     ) -> list[NewsQueryResult]:
         """Perform semantic (vector) search."""
         if not query.strip():
@@ -303,12 +403,13 @@ class NewsQueryTool:
         # Generate query embedding
         query_vector = self.embedding_service.embed_text(query)
 
-        # Search
-        search_results = self.repository.search_by_vector(query_vector, k=k * 2)
-
-        # Filter by category if specified
-        if category:
-            search_results = [r for r in search_results if r.category == category]
+        # Search with filters
+        search_results = self.repository.search_by_vector(
+            query_vector,
+            k=k * 2,
+            category=category,
+            exclusive_only=exclusive_only,
+        )
 
         # Deduplicate by article_id, keep highest score
         seen_articles = {}
@@ -329,6 +430,7 @@ class NewsQueryTool:
                 category=r.category,
                 published_at=r.published_at,
                 score=r.score,
+                is_exclusive=r.is_exclusive,
             )
             for r in unique_results
         ]
@@ -338,6 +440,7 @@ class NewsQueryTool:
         query: str,
         category: Optional[str],
         k: int,
+        exclusive_only: bool = False,
     ) -> list[NewsQueryResult]:
         """Perform hybrid (vector + BM25) search."""
         if not query.strip():
@@ -346,18 +449,16 @@ class NewsQueryTool:
         # Generate query embedding
         query_vector = self.embedding_service.embed_text(query)
 
-        # Hybrid search
+        # Hybrid search with filters
         search_results = self.repository.hybrid_search(
             query_text=query,
             query_vector=query_vector,
             k=k * 2,
             vector_boost=0.6,
             text_boost=0.4,
+            category=category,
+            exclusive_only=exclusive_only,
         )
-
-        # Filter by category if specified
-        if category:
-            search_results = [r for r in search_results if r.category == category]
 
         # Deduplicate by article_id
         seen_articles = {}
@@ -378,6 +479,7 @@ class NewsQueryTool:
                 category=r.category,
                 published_at=r.published_at,
                 score=r.score,
+                is_exclusive=r.is_exclusive,
             )
             for r in unique_results
         ]
@@ -388,19 +490,15 @@ class NewsQueryTool:
         category: Optional[str],
         hours_ago: int,
         limit: int,
+        exclusive_only: bool = False,
     ) -> list[NewsQueryResult]:
         """Get recent news, optionally filtered."""
         search_results = self.repository.get_recent_news(
             hours=hours_ago,
             limit=limit * 2,
             category=category,
+            exclusive_only=exclusive_only,
         )
-
-        # If query provided, re-rank by relevance
-        if query.strip():
-            query_vector = self.embedding_service.embed_text(query)
-            # Simple re-ranking by computing similarity
-            # (In production, you might use a more sophisticated approach)
 
         unique_results = search_results[:limit]
 
@@ -413,6 +511,7 @@ class NewsQueryTool:
                 category=r.category,
                 published_at=r.published_at,
                 score=r.score,
+                is_exclusive=r.is_exclusive,
             )
             for r in unique_results
         ]
@@ -443,25 +542,30 @@ def create_news_query_function_tool() -> FunctionTool:
         fn=tool.query,
         name="news_query",
         description="""
-Search and retrieve WSJ news articles. Supports three search modes:
+Search and retrieve WSJ news articles with intelligent query understanding.
 
-1. "hybrid" (default): Combined semantic + keyword search. Best for specific topics.
-   Example: query="Tesla earnings report", mode="hybrid"
+This tool automatically:
+- Translates queries from any language (Chinese, etc.) to English for search
+- Detects search intent (exclusive news, summary requests, time ranges)
+- Chooses the best search strategy (hybrid/semantic/recent)
+- Summarizes results when requested
 
-2. "semantic": Pure vector similarity search. Best for conceptual queries.
-   Example: query="impact of inflation on consumer spending", mode="semantic"
-
-3. "recent": Get latest news by time. Best for current events.
-   Example: query="", mode="recent", hours_ago=24, category="tech"
+Usage:
+- Just describe what news you're looking for in natural language
+- Include "独家" or "exclusive" to filter for exclusive articles only
+- Include "总结" or "summarize" to get a synthesized summary
+- Include time references like "今天", "最近", "this week" for time-based search
 
 Parameters:
-- query: Search query describing what news you're looking for
-- mode: "semantic", "hybrid", or "recent"
-- category: Optional filter (home/world/china/tech/finance/business/politics/economy)
-- hours_ago: For recent mode, limit to last N hours
-- max_results: Number of results (1-20, default 5)
+- query: Natural language query describing what news you want (any language)
+- max_results: Number of articles to return (1-20, default 5)
+
+Examples:
+- query("What's happening with Tesla?")
+- query("帮我总结一下最近的独家科技新闻")
+- query("Trump政策最新动态", max_results=10)
 
 Always use this tool when the user asks about news, current events, or wants information
-that might be in recent WSJ articles.
+from recent WSJ articles.
 """,
     )

@@ -148,6 +148,8 @@ class NewsRepository:
             query_vector: list[float],
             k: int = 5,
             min_score: float = 0.0,
+            category: Optional[str] = None,
+            exclusive_only: bool = False,
     ) -> list[SearchResult]:
         """
         Semantic search using vector similarity.
@@ -158,22 +160,50 @@ class NewsRepository:
             query_vector: Query embedding vector
             k: Number of results to return
             min_score: Minimum similarity score threshold
+            category: Optional category filter
+            exclusive_only: If True, only return exclusive articles
 
         Returns:
             list[SearchResult]: Ranked search results
         """
-        query = {
-            "size": k,
-            "query": {
-                "knn": {
-                    "content_vector": {
-                        "vector": query_vector,
-                        "k": k
+        # Build filter conditions
+        filter_conditions = []
+        if category:
+            filter_conditions.append({"term": {"category": category}})
+        if exclusive_only:
+            filter_conditions.append({"term": {"is_exclusive": True}})
+
+        if filter_conditions:
+            query = {
+                "size": k,
+                "query": {
+                    "bool": {
+                        "must": {
+                            "knn": {
+                                "content_vector": {
+                                    "vector": query_vector,
+                                    "k": k * 2  # Fetch more for filtering
+                                }
+                            }
+                        },
+                        "filter": filter_conditions
                     }
-                }
-            },
-            "_source": {"excludes": ["content_vector"]}
-        }
+                },
+                "_source": {"excludes": ["content_vector"]}
+            }
+        else:
+            query = {
+                "size": k,
+                "query": {
+                    "knn": {
+                        "content_vector": {
+                            "vector": query_vector,
+                            "k": k
+                        }
+                    }
+                },
+                "_source": {"excludes": ["content_vector"]}
+            }
 
         if min_score > 0:
             query["min_score"] = min_score
@@ -188,6 +218,8 @@ class NewsRepository:
             k: int = 5,
             vector_boost: float = 0.7,
             text_boost: float = 0.3,
+            category: Optional[str] = None,
+            exclusive_only: bool = False,
     ) -> list[SearchResult]:
         """
         Hybrid search combining vector similarity and BM25.
@@ -201,6 +233,8 @@ class NewsRepository:
             k: Number of results to return
             vector_boost: Weight for vector similarity (0-1)
             text_boost: Weight for text matching (0-1)
+            category: Optional category filter
+            exclusive_only: If True, only return exclusive articles
 
         Returns:
             list[SearchResult]: Ranked search results
@@ -208,35 +242,45 @@ class NewsRepository:
         Note:
             vector_boost + text_boost should typically equal 1.0
         """
+        # Build filter conditions
+        filter_conditions = []
+        if category:
+            filter_conditions.append({"term": {"category": category}})
+        if exclusive_only:
+            filter_conditions.append({"term": {"is_exclusive": True}})
+
+        bool_query = {
+            "should": [
+                {
+                    "knn": {
+                        "content_vector": {
+                            "vector": query_vector,
+                            "k": k * 2 if filter_conditions else k,
+                            "boost": vector_boost
+                        }
+                    }
+                },
+                {
+                    "multi_match": {
+                        "query": query_text,
+                        "fields": [
+                            "title^3",
+                            "content",
+                            "article_summary^2",
+                            "chunk_summary"
+                        ],
+                        "boost": text_boost
+                    }
+                }
+            ]
+        }
+
+        if filter_conditions:
+            bool_query["filter"] = filter_conditions
+
         query = {
             "size": k,
-            "query": {
-                "bool": {
-                    "should": [
-                        {
-                            "knn": {
-                                "content_vector": {
-                                    "vector": query_vector,
-                                    "k": k,
-                                    "boost": vector_boost
-                                }
-                            }
-                        },
-                        {
-                            "multi_match": {
-                                "query": query_text,
-                                "fields": [
-                                    "title^3",
-                                    "content",
-                                    "article_summary^2",
-                                    "chunk_summary"
-                                ],
-                                "boost": text_boost
-                            }
-                        }
-                    ]
-                }
-            },
+            "query": {"bool": bool_query},
             "_source": {"excludes": ["content_vector"]}
         }
 
@@ -248,6 +292,7 @@ class NewsRepository:
             hours: int = 24,
             limit: int = 50,
             category: Optional[str] = None,
+            exclusive_only: bool = False,
     ) -> list[SearchResult]:
         """
         Retrieve recent news articles.
@@ -256,6 +301,7 @@ class NewsRepository:
             hours: Look back window in hours
             limit: Maximum number of results
             category: Optional category filter
+            exclusive_only: If True, only return exclusive articles
 
         Returns:
             list[SearchResult]: Recent articles sorted by publish date
@@ -266,6 +312,8 @@ class NewsRepository:
 
         if category:
             must_conditions.append({"term": {"category": category}})
+        if exclusive_only:
+            must_conditions.append({"term": {"is_exclusive": True}})
 
         query = {
             "size": limit,

@@ -224,7 +224,7 @@ python run_pipeline.py -v
 基于 LlamaIndex FunctionAgent 的新闻问答 Agent。
 
 **组件:**
-- `tools.py`: NewsQueryTool + QueryPreprocessor
+- `tools.py`: NewsQueryTool + QueryAnalyzer (智能意图分析)
 - `news_agent.py`: NewsAgent - LlamaIndex FunctionAgent 封装
 - `cli.py`: 命令行交互界面
 
@@ -233,16 +233,25 @@ python run_pipeline.py -v
 - 🕐 **时间感知**: 查询自动添加当前时间上下文
 - 🇨🇳 **中文回答**: 无论输入语言，始终用中文回答
 - 📝 **高token限制**: max_tokens=4096，支持详细回答
+- ⭐ **独家新闻过滤**: 自动识别"独家"/"exclusive"关键词
+- 📊 **智能总结**: 自动识别"总结"/"summarize"关键词，生成综合摘要
 
-**QueryPreprocessor 工作流程:**
+**QueryAnalyzer 工作流程:**
 ```
 用户输入 (中文/英文)
     ↓
-LLM 翻译 + 重写
+LLM 分析意图 → QueryIntent {
+    search_query: "英文查询",
+    mode: "hybrid/semantic/recent",
+    exclusive_only: true/false,
+    needs_summary: true/false,
+    category: "tech/finance/...",
+    hours_ago: 24/72/...
+}
     ↓
-添加时间上下文 (January 25, 2026)
+英文查询 → Embedding → OpenSearch (带过滤条件)
     ↓
-英文查询 → Embedding → OpenSearch
+[如果 needs_summary] LLM 生成中文总结
 ```
 
 **使用方法:**
@@ -254,22 +263,28 @@ python -m src.agent.cli
 python -m src.agent.cli --verbose
 
 # 单次查询模式 (支持中文)
-python -m src.agent.cli --query "特斯拉最近有什么新闻？"
+python -m src.agent.cli --query "帮我总结一下最近的独家科技新闻"
 ```
 
-**NewsQueryTool 参数:**
+**NewsQueryTool 参数 (简化):**
 | 参数 | 说明 |
 |------|------|
-| `query` | 搜索查询 (支持中英文，自动翻译) |
-| `mode` | semantic / hybrid / recent |
-| `category` | 分类筛选 (tech, finance, etc.) |
-| `hours_ago` | 时间范围 (recent 模式) |
-| `max_results` | 最大结果数 (1-20) |
+| `query` | 自然语言查询 (任意语言，自动解析意图) |
+| `max_results` | 最大结果数 (1-20, 默认5) |
+
+**自动识别的意图关键词:**
+| 关键词 | 效果 |
+|--------|------|
+| 独家/exclusive | `exclusive_only=True` |
+| 总结/summarize | `needs_summary=True` → 生成中文摘要 |
+| 今天/today | `hours_ago=24` |
+| 最近/recent | `mode="recent"` |
+| 科技/tech | `category="tech"` |
 
 **Agent 特性:**
-- 自动选择最佳搜索模式
+- 智能意图识别 (无需手动指定mode)
+- 默认使用混合搜索 (hybrid)
 - 引用文章标题和 URL
-- 提供上下文分析
 - **所有回答使用中文**
 
 ## 下一步开发
