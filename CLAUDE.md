@@ -66,6 +66,11 @@ WSJRAG/
   - 内容: content, article_summary, chunk_summary
   - 向量: content_vector (4096维)
 
+**Schema 自动同步:**
+- 启动时自动检查索引是否存在
+- 索引不存在 → 创建完整索引
+- 索引存在 → 检测并添加缺失字段 (不丢失数据)
+
 ### 3. 数据处理流水线
 
 ```
