@@ -14,10 +14,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from typing import Optional
-import hashlib
 
-from src.config import get_settings
-from src.models import ProcessedDocument, ProcessedChunk, SearchResult
+from src.models import ProcessedDocument, SearchResult
 from src.storage.client import OpenSearchClient, get_opensearch_client
 
 logger = logging.getLogger(__name__)
@@ -146,10 +144,10 @@ class NewsRepository:
     # ===== Search Operations =====
 
     def search_by_vector(
-        self,
-        query_vector: list[float],
-        k: int = 5,
-        min_score: float = 0.0,
+            self,
+            query_vector: list[float],
+            k: int = 5,
+            min_score: float = 0.0,
     ) -> list[SearchResult]:
         """
         Semantic search using vector similarity.
@@ -184,12 +182,12 @@ class NewsRepository:
         return [SearchResult.from_opensearch_hit(hit) for hit in response["hits"]["hits"]]
 
     def hybrid_search(
-        self,
-        query_text: str,
-        query_vector: list[float],
-        k: int = 5,
-        vector_boost: float = 0.7,
-        text_boost: float = 0.3,
+            self,
+            query_text: str,
+            query_vector: list[float],
+            k: int = 5,
+            vector_boost: float = 0.7,
+            text_boost: float = 0.3,
     ) -> list[SearchResult]:
         """
         Hybrid search combining vector similarity and BM25.
@@ -246,10 +244,10 @@ class NewsRepository:
         return [SearchResult.from_opensearch_hit(hit) for hit in response["hits"]["hits"]]
 
     def get_recent_news(
-        self,
-        hours: int = 24,
-        limit: int = 50,
-        category: Optional[str] = None,
+            self,
+            hours: int = 24,
+            limit: int = 50,
+            category: Optional[str] = None,
     ) -> list[SearchResult]:
         """
         Retrieve recent news articles.

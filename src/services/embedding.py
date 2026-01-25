@@ -146,9 +146,9 @@ class EmbeddingService:
     # ===== Document Processing =====
 
     def process_document(
-        self,
-        article: NewsArticle,
-        llm_service: Optional[LLMService] = None,
+            self,
+            article: NewsArticle,
+            llm_service: Optional[LLMService] = None,
     ) -> ProcessedDocument:
         """
         Fully process a news article into an indexed document.
@@ -229,9 +229,9 @@ class EmbeddingService:
         )
 
     def process_articles_batch(
-        self,
-        articles: list[NewsArticle],
-        llm_service: Optional[LLMService] = None,
+            self,
+            articles: list[NewsArticle],
+            llm_service: Optional[LLMService] = None,
     ) -> list[ProcessedDocument]:
         """
         Process multiple articles.

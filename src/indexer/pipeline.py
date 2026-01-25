@@ -17,13 +17,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from src.models import NewsArticle, ProcessedDocument
-from src.services.embedding import EmbeddingService, get_embedding_service
-from src.services.llm import LLMService, get_llm_service
-from src.storage.repository import NewsRepository
-from src.storage.client import get_opensearch_client
 from src.indexer.loader import ArticleLoader, get_article_loader
 from src.indexer.state import IndexState
+from src.services.embedding import EmbeddingService, get_embedding_service
+from src.services.llm import LLMService, get_llm_service
+from src.storage.client import get_opensearch_client
+from src.storage.repository import NewsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +65,12 @@ class IndexPipeline:
     """
 
     def __init__(
-        self,
-        embedding_service: Optional[EmbeddingService] = None,
-        llm_service: Optional[LLMService] = None,
-        repository: Optional[NewsRepository] = None,
-        loader: Optional[ArticleLoader] = None,
-        state_file: str | Path = "data/indexed_files.json",
+            self,
+            embedding_service: Optional[EmbeddingService] = None,
+            llm_service: Optional[LLMService] = None,
+            repository: Optional[NewsRepository] = None,
+            loader: Optional[ArticleLoader] = None,
+            state_file: str | Path = "data/indexed_files.json",
     ) -> None:
         """
         Initialize the pipeline.
@@ -111,9 +110,9 @@ class IndexPipeline:
         return self._repository
 
     def index_single(
-        self,
-        file_path: str | Path,
-        skip_if_indexed: bool = True,
+            self,
+            file_path: str | Path,
+            skip_if_indexed: bool = True,
     ) -> IndexResult:
         """
         Index a single article file.
@@ -189,10 +188,10 @@ class IndexPipeline:
             )
 
     def index_all(
-        self,
-        articles_dir: str | Path,
-        include_failed: bool = False,
-        save_interval: int = 5,
+            self,
+            articles_dir: str | Path,
+            include_failed: bool = False,
+            save_interval: int = 5,
     ) -> BatchResult:
         """
         Index all pending articles from a directory.

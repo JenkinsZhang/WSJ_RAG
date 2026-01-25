@@ -142,10 +142,10 @@ class IndexState:
         return key in self._failed
 
     def mark_indexed(
-        self,
-        file_path: str | Path,
-        article_id: str,
-        chunks: int,
+            self,
+            file_path: str | Path,
+            article_id: str,
+            chunks: int,
     ) -> None:
         """
         Mark a file as successfully indexed.
@@ -191,9 +191,9 @@ class IndexState:
         return self._failed.get(key)
 
     def get_pending_files(
-        self,
-        articles_dir: str | Path,
-        include_failed: bool = False,
+            self,
+            articles_dir: str | Path,
+            include_failed: bool = False,
     ) -> list[Path]:
         """
         Get list of files that haven't been indexed yet.

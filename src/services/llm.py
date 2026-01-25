@@ -25,7 +25,6 @@ from src.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-
 # ===== Prompt Templates =====
 
 CHUNK_SUMMARY_PROMPT = """Summarize the following news excerpt in 1-2 concise sentences. Output only the summary, nothing else.
@@ -81,10 +80,10 @@ class LLMService:
     # ===== Core Generation Methods =====
 
     def generate(
-        self,
-        prompt: str,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
+            self,
+            prompt: str,
+            max_tokens: Optional[int] = None,
+            temperature: Optional[float] = None,
     ) -> str:
         """
         Generate text using Claude.
@@ -171,9 +170,9 @@ class LLMService:
         return self.generate(prompt, max_tokens=300)
 
     def summarize_chunks_batch(
-        self,
-        chunks: list[str],
-        max_workers: Optional[int] = None,
+            self,
+            chunks: list[str],
+            max_workers: Optional[int] = None,
     ) -> list[str]:
         """
         Summarize multiple chunks in parallel.

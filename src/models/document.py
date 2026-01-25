@@ -12,10 +12,10 @@ Design Principles:
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
-import hashlib
 
 from src.utils.url import normalize_url
 
