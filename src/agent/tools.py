@@ -45,14 +45,16 @@ class NewsQueryResult:
 
     def to_text(self) -> str:
         """Convert to readable text format."""
+        score_str = f"{self.score:.4f}" if self.score is not None else "N/A"
+        content_preview = self.content[:500] + "..." if self.content and len(self.content) > 500 else (self.content or "N/A")
         parts = [
-            f"Title: {self.title}",
+            f"Title: {self.title or 'N/A'}",
             f"Category: {self.category or 'N/A'}",
             f"Published: {self.published_at or 'N/A'}",
-            f"Summary: {self.summary}",
-            f"Content: {self.content[:500]}..." if len(self.content) > 500 else f"Content: {self.content}",
-            f"URL: {self.url}",
-            f"Relevance Score: {self.score:.4f}",
+            f"Summary: {self.summary or 'N/A'}",
+            f"Content: {content_preview}",
+            f"URL: {self.url or 'N/A'}",
+            f"Relevance Score: {score_str}",
         ]
         return "\n".join(parts)
 
