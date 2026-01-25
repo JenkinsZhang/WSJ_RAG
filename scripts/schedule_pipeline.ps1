@@ -23,9 +23,20 @@ param(
 )
 
 $TaskName = "WSJ-RAG-Pipeline"
-$ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-if (-not $ProjectRoot) {
+
+# 获取项目根目录 (更可靠的方式)
+if ($PSScriptRoot) {
+    $ProjectRoot = Split-Path -Parent $PSScriptRoot
+} else {
+    # 如果 $PSScriptRoot 为空，使用硬编码路径
     $ProjectRoot = "E:\Programming\Pycharm\WSJRAG"
+}
+
+# 验证项目目录
+if (-not (Test-Path (Join-Path $ProjectRoot "run_pipeline.py"))) {
+    Write-Host "错误: 无法找到项目目录，请在项目根目录运行此脚本" -ForegroundColor Red
+    Write-Host "当前检测路径: $ProjectRoot"
+    exit 1
 }
 
 # 查看状态
@@ -81,8 +92,14 @@ $Arguments += " --max-articles $MaxArticles"
 
 Write-Host "命令: python $Arguments"
 
+# 确保 scripts 目录存在
+$ScriptsDir = Join-Path $ProjectRoot "scripts"
+if (-not (Test-Path $ScriptsDir)) {
+    New-Item -ItemType Directory -Path $ScriptsDir | Out-Null
+}
+
 # 创建批处理文件 (更可靠)
-$BatchFile = Join-Path $ProjectRoot "scripts\run_pipeline.bat"
+$BatchFile = Join-Path $ScriptsDir "run_pipeline.bat"
 $BatchContent = @"
 @echo off
 cd /d "$ProjectRoot"
