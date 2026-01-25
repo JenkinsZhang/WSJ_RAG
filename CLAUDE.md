@@ -13,7 +13,7 @@
 | 爬虫 | Playwright | ✅ 完成 |
 | 向量化 | qwen3-embedding-8b (LM Studio, 4096维) | ✅ 完成 |
 | 存储 | OpenSearch (localhost:9200) | ✅ 完成 |
-| 索引器 | ArticleIndexer | 🔄 开发中 |
+| 索引器 | ArticleIndexer | ✅ 完成 |
 | RAG | LlamaIndex | ⏳ 待开发 |
 | Agent | LangChain | ⏳ 待开发 |
 | LLM | AWS Bedrock Claude (可切换本地模型) | ✅ 完成 |
@@ -39,7 +39,7 @@ WSJRAG/
 │   │   ├── browser.py          # Playwright 持久化浏览器管理
 │   │   ├── wsj_crawler.py      # WSJ 爬虫 (8个分类)
 │   │   └── page_inspector.py   # 页面检查工具
-│   ├── indexer/                # 🔄 开发中
+│   ├── indexer/                # 文章索引管道
 │   │   ├── loader.py           # Article JSON → NewsArticle
 │   │   ├── date_parser.py      # WSJ 时间格式解析
 │   │   ├── state.py            # indexed_files.json 管理
@@ -121,19 +121,35 @@ articles/**/*.json (爬取的文章)
 - `GET /news/recent` - 获取最近新闻
 - `GET /stats` - 索引统计
 
-## 当前开发：索引器模块
+### 6. 索引器模块
 
-### 目标
-将 `articles/` 目录下爬取的 JSON 文件索引到 OpenSearch
+将 `articles/` 目录下爬取的 JSON 文件索引到 OpenSearch。
 
-### 设计要点
+**组件:**
+- `date_parser.py`: 解析WSJ多种时间格式 ("Updated Jan. 23, 2026 4:39 pm ET")
+- `state.py`: 使用 `indexed_files.json` 追踪已索引文件
+- `loader.py`: 加载JSON文件，转换为NewsArticle
+- `pipeline.py`: 完整索引流程 (load → embed → summarize → index)
 
-1. **增量索引**: 使用 `indexed_files.json` 追踪已索引文件，避免重复处理
-2. **格式转换**: 解析WSJ多种时间格式 → ISO格式
-3. **状态持久化**: 记录成功/失败的文件，支持断点续传
-4. **LLM摘要**: 每个chunk生成摘要 (Bedrock Claude，以后可切换本地模型)
+**使用方法:**
+```bash
+# 索引所有待处理文章
+python -m examples.run_indexer
 
-### indexed_files.json 格式
+# 只索引特定分类
+python -m examples.run_indexer --category tech
+
+# 重试失败的文件
+python -m examples.run_indexer --retry-failed
+
+# 查看统计信息
+python -m examples.run_indexer --stats
+
+# 预览待处理文件
+python -m examples.run_indexer --dry-run
+```
+
+**indexed_files.json 格式:**
 ```json
 {
   "version": 1,
@@ -153,15 +169,15 @@ articles/**/*.json (爬取的文章)
 }
 ```
 
-### 预估处理时间
-单篇文章 (约3个chunks): 10-17秒
-- Embedding: 3-6秒
-- LLM摘要: 6-10秒 (文章+块摘要)
-- OpenSearch写入: 0.5秒
+**预估处理时间 (单篇文章, 约3个chunks):** 10-17秒
+
+## 下一步开发
 
 ### TODO
 - [ ] 批量处理优化 (batch_size参数)
 - [ ] 本地LLM支持 (LLMService接口抽象)
+- [ ] LlamaIndex RAG集成
+- [ ] LangChain Agent
 
 ## 环境要求
 
