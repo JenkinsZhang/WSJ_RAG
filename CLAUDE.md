@@ -47,6 +47,8 @@ WSJRAG/
 │   └── utils/
 │       ├── text.py             # 文本分块器
 │       └── url.py              # URL 标准化
+├── scripts/
+│   └── clean_article_urls.py   # 清理已有文章URL
 ├── articles/                   # 爬取的文章 (按分类/日期组织)
 ├── data/
 │   ├── crawled_urls.json       # 爬虫URL去重

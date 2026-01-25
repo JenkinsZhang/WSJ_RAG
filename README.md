@@ -212,6 +212,8 @@ WSJRAG/
 │   └── utils/
 │       ├── text.py              # 文本分块
 │       └── url.py               # URL 标准化
+├── scripts/
+│   └── clean_article_urls.py    # URL 清理脚本
 ├── examples/
 │   ├── run_indexer.py           # 索引脚本
 │   └── demo_pipeline.py         # 演示脚本
@@ -289,6 +291,18 @@ docker run -d -p 9200:9200 -e "discovery.type=single-node" opensearchproject/ope
 ```
 https://wsj.com/tech/article?mod=nav     → ID: abc123
 https://wsj.com/tech/article?mod=search  → ID: abc123 (相同)
+```
+
+### Q: 如何清理已爬取文章的 URL？
+
+如果已有文章包含查询参数，可以使用清理脚本：
+
+```bash
+# 预览需要更新的文件
+python scripts/clean_article_urls.py
+
+# 应用更改
+python scripts/clean_article_urls.py --apply
 ```
 
 ### Q: 如何重新索引所有文章？
