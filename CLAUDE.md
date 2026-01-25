@@ -28,13 +28,13 @@ WSJRAG/
 ├── src/
 │   ├── config/settings.py      # 集中配置管理，支持环境变量
 │   ├── models/document.py      # NewsArticle, ProcessedDocument, SearchResult
-│   ├── storage/
+│   ├── clients/                # 外部服务客户端
+│   │   ├── opensearch.py       # OpenSearch 客户端封装
+│   │   ├── embedding.py        # Embedding API 客户端 + 文档处理
+│   │   └── llm.py              # Bedrock Claude 客户端
+│   ├── storage/                # 数据访问层
 │   │   ├── schema.py           # OpenSearch index schema (HNSW, cosine)
-│   │   ├── client.py           # OpenSearch 客户端封装
 │   │   └── repository.py       # 数据访问层 (CRUD + 搜索)
-│   ├── services/
-│   │   ├── embedding.py        # Embedding + 文档处理流水线
-│   │   └── llm.py              # Bedrock Claude 集成
 │   ├── crawler/
 │   │   ├── browser.py          # Playwright 持久化浏览器管理
 │   │   ├── wsj_crawler.py      # WSJ 爬虫 (8个分类)
@@ -44,6 +44,8 @@ WSJRAG/
 │   │   ├── date_parser.py      # WSJ 时间格式解析
 │   │   ├── state.py            # indexed_files.json 管理
 │   │   └── pipeline.py         # 索引主流程
+│   ├── agent/                  # RAG/Agent 模块 (待开发)
+│   │   └── __init__.py
 │   └── utils/
 │       ├── text.py             # 文本分块器
 │       └── url.py              # URL 标准化
@@ -53,8 +55,11 @@ WSJRAG/
 ├── data/
 │   ├── crawled_urls.json       # 爬虫URL去重
 │   └── indexed_files.json      # 索引状态追踪
-├── examples/demo_pipeline.py   # 完整流程演示
+├── examples/
+│   ├── demo_pipeline.py        # 完整流程演示
+│   └── run_indexer.py          # 索引脚本
 ├── main.py                     # FastAPI 入口
+├── run_pipeline.py             # 完整数据流程脚本
 └── requirements.txt
 ```
 
