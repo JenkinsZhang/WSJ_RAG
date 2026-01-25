@@ -14,9 +14,8 @@ boto3>=1.34.0
 requests>=2.31.0
 
 # LlamaIndex Agent
-llama-index-core>=0.12.0
-llama-index-llms-bedrock-converse>=0.4.0
-llama-index-agent-openai>=0.4.0
+llama-index>=0.14.0
+llama-index-llms-bedrock-converse>=0.12.0
 
 # Crawler
 playwright>=1.40.0

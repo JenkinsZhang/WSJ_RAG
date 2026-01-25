@@ -17,7 +17,7 @@ Environment Variables:
     EMBEDDING_BASE_URL: LM Studio base URL (default: http://127.0.0.1:1234/v1)
     EMBEDDING_MODEL: Embedding model name (default: text-embedding-qwen3-embedding-8b)
     AWS_REGION: AWS region for Bedrock (default: us-east-1)
-    BEDROCK_MODEL_ID: Bedrock model ID (default: global.anthropic.claude-sonnet-4-5-20250929-v1:0)
+    BEDROCK_MODEL_ID: Bedrock model ID (default: us.anthropic.claude-sonnet-4-5-20250929-v1:0)
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ class LLMSettings:
         max_workers: Maximum parallel workers for batch operations
     """
     region_name: str = "us-east-1"
-    model_id: str = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    model_id: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     max_tokens: int = 512
     temperature: float = 0.3
     max_workers: int = 5
@@ -145,7 +145,7 @@ def _load_from_env() -> Settings:
 
     llm = LLMSettings(
         region_name=os.getenv("AWS_REGION", "us-east-1"),
-        model_id=os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
+        model_id=os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "512")),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
         max_workers=int(os.getenv("LLM_MAX_WORKERS", "5")),
