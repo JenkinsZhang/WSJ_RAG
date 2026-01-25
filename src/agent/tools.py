@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -27,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class SearchMode(str, Enum):
     """Search mode for news query."""
+
     SEMANTIC = "semantic"
     HYBRID = "hybrid"
     RECENT = "recent"
@@ -35,6 +35,7 @@ class SearchMode(str, Enum):
 @dataclass
 class NewsQueryResult:
     """Structured result from news query."""
+
     title: str
     url: str
     content: str
@@ -46,7 +47,11 @@ class NewsQueryResult:
     def to_text(self) -> str:
         """Convert to readable text format."""
         score_str = f"{self.score:.4f}" if self.score is not None else "N/A"
-        content_preview = self.content[:500] + "..." if self.content and len(self.content) > 500 else (self.content or "N/A")
+        content_preview = (
+            self.content[:500] + "..."
+            if self.content and len(self.content) > 500
+            else (self.content or "N/A")
+        )
         parts = [
             f"Title: {self.title or 'N/A'}",
             f"Category: {self.category or 'N/A'}",
@@ -147,7 +152,9 @@ class NewsQueryTool:
         if mode not in ["semantic", "hybrid", "recent"]:
             mode = "hybrid"
 
-        logger.info(f"News query: mode={mode}, query='{query[:50]}...', category={category}")
+        logger.info(
+            f"News query: mode={mode}, query='{query[:50]}...', category={category}"
+        )
 
         try:
             if mode == "recent":
