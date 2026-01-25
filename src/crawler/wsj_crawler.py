@@ -266,24 +266,31 @@ class WSJCrawler:
 
                 seen_urls.add(href)
 
-                # 清理标题中的 EXCLUSIVE 前缀（如有）
+                # 检测列表页 EXCLUSIVE（如有则一定是 EXCLUSIVE）
+                is_exclusive = False
                 title = text
                 if text.upper().startswith("EXCLUSIVE"):
+                    is_exclusive = True
                     title = re.sub(r'^EXCLUSIVE\s*\n?\s*', '', text, flags=re.IGNORECASE)
                 elif text.upper().startswith("EXCL:"):
+                    is_exclusive = True
                     title = re.sub(r'^EXCL:\s*', '', text, flags=re.IGNORECASE)
 
                 articles.append(ArticleLink(
                     title=title.strip(),
                     url=href,
-                    is_exclusive=False,  # 详情页判断
-                    priority=1
+                    is_exclusive=is_exclusive,
+                    priority=0 if is_exclusive else 1
                 ))
 
             except Exception as e:
                 continue
 
-        logger.info(f"找到 {len(articles)} 篇文章")
+        # 按优先级排序（列表页检测到的 EXCLUSIVE 在前）
+        articles.sort(key=lambda x: x.priority)
+
+        exclusive_count = sum(1 for a in articles if a.is_exclusive)
+        logger.info(f"找到 {len(articles)} 篇文章 (列表页EXCLUSIVE: {exclusive_count})")
 
         return articles
 
@@ -344,16 +351,24 @@ class WSJCrawler:
                     };
 
                     // 检测 EXCLUSIVE 标记 (详情页)
-                    // 方法1: 检查页面文本中是否有 EXCLUSIVE 标签
-                    const exclusiveEl = document.querySelector('[class*="exclusive" i], [class*="Exclusive" i], [data-type="exclusive"]');
-                    if (exclusiveEl) {
+                    // 方法1: 检查 aria-label 包含 "exclusive" (如 breadcrumb nav)
+                    const exclusiveNav = document.querySelector('[aria-label*="exclusive" i], [aria-label*="Exclusive" i]');
+                    if (exclusiveNav) {
                         result.is_exclusive = true;
                     }
-                    // 方法2: 检查标题前是否有 EXCLUSIVE 文字
-                    const headlineContainer = document.querySelector('[data-testid="headline-container"]') || document.querySelector('header');
-                    if (headlineContainer) {
-                        const text = headlineContainer.innerText.toUpperCase();
-                        if (text.includes('EXCLUSIVE') || text.includes('EXCL:')) {
+                    // 方法2: 检查 data-testid="content-tag" 或 data-testid="content-tag-flashline" 内的文本
+                    if (!result.is_exclusive) {
+                        const contentTags = document.querySelectorAll('[data-testid="content-tag"], [data-testid="content-tag-flashline"]');
+                        contentTags.forEach(tag => {
+                            if (tag.innerText.toLowerCase().includes('exclusive')) {
+                                result.is_exclusive = true;
+                            }
+                        });
+                    }
+                    // 方法3: 检查 breadcrumb 区域内是否有 exclusive 文字
+                    if (!result.is_exclusive) {
+                        const breadcrumb = document.querySelector('nav.breadcrumb, [class*="breadcrumb"]');
+                        if (breadcrumb && breadcrumb.innerText.toLowerCase().includes('exclusive')) {
                             result.is_exclusive = true;
                         }
                     }
@@ -436,9 +451,12 @@ class WSJCrawler:
             # 使用链接中的标题（如果页面标题为空）
             title = data['title'] or link.title
 
-            # EXCLUSIVE 从详情页判断
-            is_exclusive = data.get('is_exclusive', False)
-            if is_exclusive:
+            # EXCLUSIVE: 列表页 OR 详情页检测到即为 EXCLUSIVE
+            is_exclusive = link.is_exclusive or data.get('is_exclusive', False)
+            if is_exclusive and not link.is_exclusive:
+                # 详情页新检测到
+                logger.info("    [EXCLUSIVE] 详情页检测到独家报道")
+            elif is_exclusive:
                 logger.info("    [EXCLUSIVE] 独家报道")
 
             return Article(
@@ -520,7 +538,8 @@ class WSJCrawler:
         # 爬取每篇文章
         articles = []
         for i, link in enumerate(links_to_crawl, 1):
-            logger.info(f"\n[{i}/{len(links_to_crawl)}] {link.title[:40]}...")
+            exclusive_tag = "[EXCLUSIVE] " if link.is_exclusive else ""
+            logger.info(f"\n[{i}/{len(links_to_crawl)}] {exclusive_tag}{link.title[:40]}...")
 
             article = self._scrape_article(link, category)
 
