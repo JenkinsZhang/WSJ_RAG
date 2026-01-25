@@ -59,7 +59,7 @@ export EMBEDDING_MODEL=text-embedding-qwen3-embedding-8b
 
 # AWS Bedrock
 export AWS_REGION=us-east-1
-export BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+export BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
 ```
 
 ---
@@ -188,7 +188,7 @@ curl -X POST http://localhost:8000/search \
 
 ### 新闻问答 Agent (CLI)
 
-基于 LlamaIndex 的交互式新闻问答 Agent。
+基于 LlamaIndex 的交互式新闻问答 Agent，支持中英文查询，自动分析用户意图。
 
 ```bash
 # 交互模式
@@ -197,21 +197,30 @@ python -m src.agent.cli
 # 显示 agent 推理过程
 python -m src.agent.cli --verbose
 
-# 单次查询
-python -m src.agent.cli --query "What's the latest on AI regulations?"
+# 单次查询 (支持中英文)
+python -m src.agent.cli --query "帮我总结一下最近的独家科技新闻"
+python -m src.agent.cli --query "What's happening with Tesla?"
 ```
 
-**功能:**
-- 自然语言新闻查询
-- 自动选择最佳搜索策略 (语义/混合/时间)
-- 引用来源和 URL
-- 多轮对话
+**核心功能:**
+- 🌐 **多语言查询**: 中文/英文自动翻译为英文检索
+- 🤖 **智能意图识别**: 自动检测搜索模式、时间范围、独家筛选、总结需求
+- 🇨🇳 **中文回答**: 所有回答都使用中文
+- ⏰ **时间感知**: Agent 知道当前日期，会说明新闻的时效性
+
+**自动识别的关键词:**
+| 关键词 | 效果 |
+|--------|------|
+| 独家/exclusive | 只搜索独家新闻 |
+| 总结/summarize | 自动生成综合摘要 |
+| 今天/最近/recent | 按时间筛选新闻 |
+| 科技/tech/finance | 按分类筛选 |
 
 **示例问题:**
-- "What's the latest news about AI?"
-- "Summarize recent tech news from the past 24 hours"
+- "帮我总结一下最近的独家科技新闻"
+- "特斯拉最近有什么新闻？"
 - "What's happening with Federal Reserve interest rates?"
-- "Find news about Tesla earnings"
+- "今天有什么重要的商业新闻？"
 
 ---
 
@@ -354,11 +363,12 @@ python run_pipeline.py --index-only
 
 ## 开发计划
 
-- [ ] LlamaIndex RAG 集成
-- [ ] LangChain Agent 多步推理
+- [x] LlamaIndex RAG 集成
+- [x] 智能 Agent (FunctionAgent + QueryAnalyzer)
 - [ ] 本地 LLM 支持
 - [ ] 批量处理优化
 - [ ] 定时爬取调度
+- [ ] Agent 多轮对话记忆
 
 ---
 

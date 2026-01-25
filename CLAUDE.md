@@ -44,8 +44,10 @@ WSJRAG/
 │   │   ├── date_parser.py      # WSJ 时间格式解析
 │   │   ├── state.py            # indexed_files.json 管理
 │   │   └── pipeline.py         # 索引主流程
-│   ├── agent/                  # RAG/Agent 模块 (待开发)
-│   │   └── __init__.py
+│   ├── agent/                  # LlamaIndex Agent 模块
+│   │   ├── tools.py            # NewsQueryTool + QueryAnalyzer
+│   │   ├── news_agent.py       # FunctionAgent 封装
+│   │   └── cli.py              # 命令行交互界面
 │   └── utils/
 │       ├── text.py             # 文本分块器
 │       └── url.py              # URL 标准化
@@ -289,11 +291,19 @@ python -m src.agent.cli --query "帮我总结一下最近的独家科技新闻"
 
 ## 下一步开发
 
+### 已完成
+- [x] LlamaIndex FunctionAgent 集成
+- [x] 智能查询分析 (QueryAnalyzer)
+- [x] 多语言支持 (中英文自动翻译)
+- [x] 独家新闻过滤
+- [x] 自动总结功能
+- [x] 时间感知 (Agent 知道当前日期)
+
 ### TODO
 - [ ] 批量处理优化 (batch_size参数)
 - [ ] 本地LLM支持 (LLMService接口抽象)
 - [ ] Agent 多轮对话记忆
-- [ ] 更多 Agent 工具 (新闻摘要、趋势分析)
+- [ ] 更多 Agent 工具 (趋势分析、对比分析)
 
 ## 环境要求
 
@@ -323,5 +333,5 @@ OPENSEARCH_PORT=9200
 EMBEDDING_BASE_URL=http://127.0.0.1:1234/v1
 EMBEDDING_MODEL=text-embedding-qwen3-embedding-8b
 AWS_REGION=us-east-1
-BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
 ```
