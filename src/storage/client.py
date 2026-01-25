@@ -38,9 +38,9 @@ class OpenSearchClient:
     """
 
     def __init__(
-        self,
-        client: Optional[OpenSearch] = None,
-        schema: Optional[IndexSchema] = None,
+            self,
+            client: Optional[OpenSearch] = None,
+            schema: Optional[IndexSchema] = None,
     ) -> None:
         """
         Initialize the OpenSearch client.
@@ -188,6 +188,99 @@ class OpenSearchClient:
         Call this after bulk indexing operations.
         """
         self.client.indices.refresh(index=self.schema.index_name)
+
+    def get_current_mapping(self) -> dict:
+        """
+        Get the current index mapping.
+
+        Returns:
+            dict: Current field mappings or empty dict if index doesn't exist
+        """
+        if not self.index_exists():
+            return {}
+
+        mapping = self.client.indices.get_mapping(index=self.schema.index_name)
+        return mapping.get(self.schema.index_name, {}).get("mappings", {}).get("properties", {})
+
+    def get_missing_fields(self) -> dict:
+        """
+        Compare current mapping with schema and find missing fields.
+
+        Returns:
+            dict: Field definitions that need to be added
+        """
+        current = self.get_current_mapping()
+        expected = self.schema.to_mapping()["mappings"]["properties"]
+
+        missing = {}
+        for field_name, field_def in expected.items():
+            if field_name not in current:
+                missing[field_name] = field_def
+                logger.debug(f"Missing field: {field_name}")
+
+        return missing
+
+    def update_mapping(self, fields: dict) -> dict:
+        """
+        Add new fields to the existing index mapping.
+
+        Args:
+            fields: Field definitions to add
+
+        Returns:
+            dict: Update result
+
+        Note:
+            OpenSearch allows adding new fields but not modifying existing ones.
+        """
+        if not fields:
+            return {"status": "no_changes", "fields_added": []}
+
+        index_name = self.schema.index_name
+        body = {"properties": fields}
+
+        try:
+            self.client.indices.put_mapping(index=index_name, body=body)
+            field_names = list(fields.keys())
+            logger.info(f"Added fields to {index_name}: {field_names}")
+            return {"status": "updated", "fields_added": field_names}
+        except Exception as e:
+            logger.error(f"Failed to update mapping: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def ensure_schema_current(self) -> dict:
+        """
+        Ensure index exists and schema is up to date.
+
+        - If index doesn't exist: create it
+        - If index exists: add any missing fields
+
+        Returns:
+            dict: Operation result with status and details
+        """
+        index_name = self.schema.index_name
+
+        if not self.index_exists():
+            # Create new index
+            logger.info(f"Creating index: {index_name}")
+            mapping = self.schema.to_mapping()
+            response = self.client.indices.create(index=index_name, body=mapping)
+            return {
+                "status": "created",
+                "index": index_name,
+                "acknowledged": response.get("acknowledged"),
+            }
+
+        # Index exists - check for missing fields
+        missing = self.get_missing_fields()
+
+        if not missing:
+            logger.info(f"Index {index_name} schema is up to date")
+            return {"status": "current", "index": index_name}
+
+        # Update mapping with missing fields
+        logger.info(f"Updating index {index_name} with {len(missing)} new fields")
+        return self.update_mapping(missing)
 
 
 # ===== Module-level singleton =====

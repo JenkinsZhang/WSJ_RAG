@@ -184,11 +184,13 @@ def main():
             print("Service check failed. Use --skip-check to bypass.")
             sys.exit(1)
 
-    # Ensure index exists
+    # Ensure index exists and schema is current
     client = get_opensearch_client()
-    if not client.index_exists():
-        print("Creating OpenSearch index...")
-        client.ensure_index_exists(recreate=False)
+    schema_result = client.ensure_schema_current()
+    if schema_result["status"] == "created":
+        print(f"Created OpenSearch index: {schema_result['index']}")
+    elif schema_result["status"] == "updated":
+        print(f"Updated schema, added fields: {schema_result['fields_added']}")
 
     # Run indexer
     print(f"\nStarting indexer for {len(pending)} files...")

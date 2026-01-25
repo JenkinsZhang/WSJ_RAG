@@ -115,15 +115,27 @@ def check_services(logger: logging.Logger) -> dict:
         "llm": False,
     }
 
-    # 检查 OpenSearch
+    # 检查 OpenSearch 并确保 schema 最新
     try:
         client = get_opensearch_client()
         health = client.health_check()
-        if health.get("status") == "healthy":
-            status["opensearch"] = True
-            logger.info(f"✓ OpenSearch: 正常 (索引存在: {client.index_exists()})")
-        else:
+        if health.get("status") != "healthy":
             logger.error(f"✗ OpenSearch: 异常 - {health}")
+            return status
+
+        # 确保索引存在且 schema 最新
+        schema_result = client.ensure_schema_current()
+        if schema_result["status"] == "created":
+            logger.info(f"✓ OpenSearch: 已创建索引 {schema_result['index']}")
+        elif schema_result["status"] == "updated":
+            logger.info(f"✓ OpenSearch: 已更新 schema，新增字段: {schema_result['fields_added']}")
+        elif schema_result["status"] == "current":
+            logger.info(f"✓ OpenSearch: 正常 (schema 已是最新)")
+        elif schema_result["status"] == "error":
+            logger.error(f"✗ OpenSearch: schema 更新失败 - {schema_result.get('error')}")
+            return status
+
+        status["opensearch"] = True
     except Exception as e:
         logger.error(f"✗ OpenSearch: 连接失败 - {e}")
 
