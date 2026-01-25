@@ -677,9 +677,11 @@ class WSJCrawler:
         url_lower = url.lower()
 
         # 按优先级顺序匹配（更具体的先匹配）
-        # china 必须在 world 之前，因为 /world/china 应该匹配 china
+        # 子分类必须在父分类之前匹配
         if '/world/china' in url_lower or '/china/' in url_lower:
             return 'china'
+        if '/world/asia' in url_lower or '/asia/' in url_lower:
+            return 'asia'
         if '/tech/' in url_lower or '/technology/' in url_lower:
             return 'tech'
         if '/world/' in url_lower:
@@ -699,7 +701,7 @@ class WSJCrawler:
         if '/opinion/' in url_lower:
             return 'opinion'
         if '/us-news/' in url_lower:
-            return 'us-news'
+            return 'us'
         if '/personal-finance/' in url_lower:
             return 'personal-finance'
         if '/sports/' in url_lower:
