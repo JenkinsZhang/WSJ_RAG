@@ -18,7 +18,7 @@ from datetime import datetime
 
 from src.config import get_settings
 from src.models import NewsArticle
-from src.storage import NewsRepository
+from src.storage.repository import NewsRepository
 from src.clients import OpenSearchClient, EmbeddingService, LLMService
 
 # ===== Application Setup =====

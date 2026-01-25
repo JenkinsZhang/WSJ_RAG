@@ -13,11 +13,10 @@ from typing import Optional
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.llms.bedrock_converse import BedrockConverse
 
-from src.config import get_settings
 from src.agent.tools import create_news_query_function_tool
+from src.config import get_settings
 
 logger = logging.getLogger(__name__)
-
 
 # System prompt for the news agent
 NEWS_AGENT_SYSTEM_PROMPT = """You are a helpful news analyst assistant with access to WSJ (Wall Street Journal) news articles.
@@ -56,9 +55,9 @@ class NewsAgent:
     """
 
     def __init__(
-        self,
-        model_id: Optional[str] = None,
-        verbose: bool = False,
+            self,
+            model_id: Optional[str] = None,
+            verbose: bool = False,
     ) -> None:
         """
         Initialize the news agent.
