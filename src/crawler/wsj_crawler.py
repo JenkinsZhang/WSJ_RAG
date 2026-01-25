@@ -226,7 +226,7 @@ class WSJCrawler:
     def _extract_article_links(self, category: str) -> list[ArticleLink]:
         """
         从列表页提取文章链接
-        - EXCLUSIVE 文章优先
+        注: EXCLUSIVE 标记在详情页判断，列表页只提取链接
         """
         articles = []
         seen_urls = set()
@@ -266,31 +266,24 @@ class WSJCrawler:
 
                 seen_urls.add(href)
 
-                # 检测 EXCLUSIVE
-                is_exclusive = False
+                # 清理标题中的 EXCLUSIVE 前缀（如有）
                 title = text
-
                 if text.upper().startswith("EXCLUSIVE"):
-                    is_exclusive = True
                     title = re.sub(r'^EXCLUSIVE\s*\n?\s*', '', text, flags=re.IGNORECASE)
                 elif text.upper().startswith("EXCL:"):
-                    is_exclusive = True
                     title = re.sub(r'^EXCL:\s*', '', text, flags=re.IGNORECASE)
 
                 articles.append(ArticleLink(
                     title=title.strip(),
                     url=href,
-                    is_exclusive=is_exclusive,
-                    priority=0 if is_exclusive else 1
+                    is_exclusive=False,  # 详情页判断
+                    priority=1
                 ))
 
             except Exception as e:
                 continue
 
-        # 按优先级排序（EXCLUSIVE 在前）
-        articles.sort(key=lambda x: x.priority)
-
-        logger.info(f"找到 {len(articles)} 篇文章 (EXCLUSIVE: {sum(1 for a in articles if a.is_exclusive)})")
+        logger.info(f"找到 {len(articles)} 篇文章")
 
         return articles
 
@@ -346,8 +339,24 @@ class WSJCrawler:
                         subtitle: '',
                         author: '',
                         published_at: '',
-                        content: ''
+                        content: '',
+                        is_exclusive: false
                     };
+
+                    // 检测 EXCLUSIVE 标记 (详情页)
+                    // 方法1: 检查页面文本中是否有 EXCLUSIVE 标签
+                    const exclusiveEl = document.querySelector('[class*="exclusive" i], [class*="Exclusive" i], [data-type="exclusive"]');
+                    if (exclusiveEl) {
+                        result.is_exclusive = true;
+                    }
+                    // 方法2: 检查标题前是否有 EXCLUSIVE 文字
+                    const headlineContainer = document.querySelector('[data-testid="headline-container"]') || document.querySelector('header');
+                    if (headlineContainer) {
+                        const text = headlineContainer.innerText.toUpperCase();
+                        if (text.includes('EXCLUSIVE') || text.includes('EXCL:')) {
+                            result.is_exclusive = true;
+                        }
+                    }
 
                     // 标题 - 兼容两种布局
                     const headline = document.querySelector('[data-testid="headline"]') || document.querySelector('h1');
@@ -427,6 +436,11 @@ class WSJCrawler:
             # 使用链接中的标题（如果页面标题为空）
             title = data['title'] or link.title
 
+            # EXCLUSIVE 从详情页判断
+            is_exclusive = data.get('is_exclusive', False)
+            if is_exclusive:
+                logger.info("    [EXCLUSIVE] 独家报道")
+
             return Article(
                 title=title,
                 url=normalize_url(link.url),  # 清理URL参数
@@ -435,7 +449,7 @@ class WSJCrawler:
                 published_at=data['published_at'] or None,
                 subtitle=data['subtitle'] or None,
                 category=category,
-                is_exclusive=link.is_exclusive,
+                is_exclusive=is_exclusive,
             )
 
         except Exception as e:
@@ -506,7 +520,7 @@ class WSJCrawler:
         # 爬取每篇文章
         articles = []
         for i, link in enumerate(links_to_crawl, 1):
-            logger.info(f"\n[{i}/{len(links_to_crawl)}] {'[EXCLUSIVE] ' if link.is_exclusive else ''}{link.title[:40]}...")
+            logger.info(f"\n[{i}/{len(links_to_crawl)}] {link.title[:40]}...")
 
             article = self._scrape_article(link, category)
 
@@ -517,8 +531,9 @@ class WSJCrawler:
                 filepath = self._save_article(article)
                 logger.info(f"    保存: {filepath.name}")
 
-                # 记录已爬取（基于URL，去掉参数）
+                # 记录已爬取并立即保存（避免中断时丢失进度）
                 self._crawled_urls.add(self._normalize_url(link.url))
+                self._save_crawled_urls()
 
             # 随机间隔
             if i < len(links_to_crawl):
