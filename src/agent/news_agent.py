@@ -116,7 +116,7 @@ class NewsAgent:
         logger.debug(f"User message: {message}")
 
         try:
-            response = await self.agent.run(input=message)
+            response = await self.agent.run(user_msg=message)
 
             # Extract the response text
             if hasattr(response, 'response'):
