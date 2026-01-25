@@ -4,10 +4,12 @@
 
 ## 功能特性
 
-- **智能爬虫**: Playwright 自动化爬取 WSJ 8个分类的新闻
+- **智能爬虫**: Playwright 自动化爬取 WSJ 8个分类的新闻，支持单 URL 爬取
 - **语义搜索**: 基于向量的语义搜索 + BM25 混合搜索
 - **智能摘要**: LLM 自动生成文章和段落摘要
 - **增量处理**: 自动跳过已处理的文章，支持断点续传
+- **智能 Agent**: 基于 LlamaIndex 的新闻问答，支持中英文查询
+- **定时任务**: Windows 任务计划程序自动运行
 
 ## 技术栈
 
@@ -17,6 +19,7 @@
 | 向量化 | LM Studio + qwen3-embedding-8b (4096维) |
 | 存储 | OpenSearch (HNSW 向量索引) |
 | LLM | AWS Bedrock Claude |
+| Agent | LlamaIndex FunctionAgent |
 | API | FastAPI |
 
 ## 环境要求
@@ -97,12 +100,13 @@ python run_pipeline.py -v
 
 | 参数 | 说明 |
 |------|------|
-| `--category` | 指定分类: home, world, china, tech, finance, business, politics, economy |
-| `--max-articles` | 每分类最大爬取数 (默认 20) |
+| `--category, -c` | 指定分类: home, world, china, tech, finance, business, politics, economy |
+| `--max-articles, -m` | 每分类最大爬取数 (默认: home=50, 其他=20) |
 | `--crawl-only` | 只运行爬虫 |
 | `--index-only` | 只运行索引 |
 | `--retry-failed` | 重试失败的文件 |
 | `--skip-service-check` | 跳过服务检查 |
+| `--log-file` | 指定日志文件路径 |
 | `-v, --verbose` | 详细日志 |
 
 ---
@@ -127,11 +131,18 @@ python -m src.crawler.wsj_crawler --url "https://www.wsj.com/tech/ai/article-slu
 python -m src.crawler.wsj_crawler --url "https://www.wsj.com/..." --category-for-url tech
 ```
 
+**爬取数量限制:**
+- 首页 (home): 最多 50 篇文章
+- 其他分类: 最多 20 篇文章
+
 **注意**: 首次运行需要手动登录 WSJ 账号，登录状态会保存在 Chrome profile 中。
 
 **输出目录结构:**
 ```
 articles/
+├── home/
+│   └── 2026-01-25/
+│       └── ...
 ├── tech/
 │   └── 2026-01-25/
 │       ├── intel-shares-slide-9271b096.json
@@ -170,6 +181,9 @@ python -m examples.run_indexer --retry-failed
 
 # 清除失败记录
 python -m examples.run_indexer --clear-failed
+
+# 跳过服务检查
+python -m examples.run_indexer --skip-check
 ```
 
 **索引状态文件:** `data/indexed_files.json`
@@ -219,10 +233,10 @@ python -m src.agent.cli --query "What's happening with Tesla?"
 ```
 
 **核心功能:**
-- 🌐 **多语言查询**: 中文/英文自动翻译为英文检索
-- 🤖 **智能意图识别**: 自动检测搜索模式、时间范围、独家筛选、总结需求
-- 🇨🇳 **中文回答**: 所有回答都使用中文
-- ⏰ **时间感知**: Agent 知道当前日期，会说明新闻的时效性
+- **多语言查询**: 中文/英文自动翻译为英文检索
+- **智能意图识别**: 自动检测搜索模式、时间范围、独家筛选、总结需求
+- **中文回答**: 所有回答都使用中文
+- **时间感知**: Agent 知道当前日期，会说明新闻的时效性
 
 **自动识别的关键词:**
 | 关键词 | 效果 |
@@ -246,9 +260,10 @@ python -m src.agent.cli --query "What's happening with Tesla?"
 WSJRAG/
 ├── run_pipeline.py              # 完整流程入口
 ├── main.py                      # FastAPI 应用
+├── requirements.txt             # Python 依赖
 ├── src/
 │   ├── config/settings.py       # 配置管理
-│   ├── models/document.py       # 数据模型
+│   ├── models/document.py       # 数据模型 (NewsArticle, SearchResult)
 │   ├── clients/                 # 外部服务客户端
 │   │   ├── opensearch.py        # OpenSearch 客户端
 │   │   ├── embedding.py         # Embedding 服务
@@ -257,20 +272,24 @@ WSJRAG/
 │   │   ├── schema.py            # OpenSearch 索引设计
 │   │   └── repository.py        # 数据访问层
 │   ├── crawler/
-│   │   ├── browser.py           # Playwright 浏览器
-│   │   └── wsj_crawler.py       # WSJ 爬虫
+│   │   ├── browser.py           # Playwright 浏览器管理
+│   │   ├── wsj_crawler.py       # WSJ 爬虫
+│   │   └── page_inspector.py    # 页面检查工具
 │   ├── indexer/
 │   │   ├── loader.py            # 文章加载器
+│   │   ├── date_parser.py       # 日期解析器
 │   │   ├── state.py             # 索引状态管理
 │   │   └── pipeline.py          # 索引流水线
 │   ├── agent/                   # LlamaIndex Agent
-│   │   ├── tools.py             # NewsQueryTool
+│   │   ├── tools.py             # NewsQueryTool + QueryAnalyzer
 │   │   ├── news_agent.py        # FunctionAgent 封装
 │   │   └── cli.py               # 命令行交互
 │   └── utils/
 │       ├── text.py              # 文本分块
 │       └── url.py               # URL 标准化
 ├── scripts/
+│   ├── schedule_pipeline.ps1    # Windows 定时任务脚本
+│   ├── run_pipeline.bat         # 定时任务批处理 (自动生成)
 │   └── clean_article_urls.py    # URL 清理脚本
 ├── examples/
 │   ├── run_indexer.py           # 索引脚本
@@ -314,10 +333,12 @@ WSJRAG/
                     │   wsj_news      │
                     └────────┬────────┘
                              │
-                    ┌────────▼────────┐
-                    │   FastAPI       │
-                    │   搜索 API      │
-                    └─────────────────┘
+          ┌──────────────────┼──────────────────┐
+          │                  │                  │
+   ┌──────▼──────┐   ┌───────▼───────┐   ┌──────▼──────┐
+   │  FastAPI    │   │  Agent CLI    │   │  定时任务   │
+   │  搜索 API   │   │  问答交互     │   │  自动爬取   │
+   └─────────────┘   └───────────────┘   └─────────────┘
 ```
 
 ---
@@ -327,13 +348,16 @@ WSJRAG/
 使用 PowerShell 脚本设置 Windows 任务计划程序自动运行 pipeline：
 
 ```powershell
-# 以管理员身份运行 PowerShell
+# 在项目目录下，以管理员身份运行 PowerShell
 
-# 设置每天早上8点运行
+# 设置每天早上8点运行 (默认)
 .\scripts\schedule_pipeline.ps1
 
 # 自定义时间和分类
 .\scripts\schedule_pipeline.ps1 -Hour 9 -Minute 30 -Categories "tech,finance"
+
+# 自定义每分类文章数
+.\scripts\schedule_pipeline.ps1 -MaxArticles 10
 
 # 查看任务状态
 .\scripts\schedule_pipeline.ps1 -Status
@@ -343,7 +367,20 @@ WSJRAG/
 
 # 手动触发运行
 schtasks /run /tn "WSJ-RAG-Pipeline"
+
+# 打开任务计划程序 GUI
+taskschd.msc
 ```
+
+**参数说明:**
+| 参数 | 说明 |
+|------|------|
+| `-Hour` | 运行小时 (0-23, 默认 8) |
+| `-Minute` | 运行分钟 (0-59, 默认 0) |
+| `-Categories` | 分类列表，逗号分隔 |
+| `-MaxArticles` | 每分类最大文章数 (默认 20) |
+| `-Status` | 查看任务状态 |
+| `-Remove` | 删除任务 |
 
 ---
 
@@ -392,7 +429,7 @@ python scripts/clean_article_urls.py --apply
 
 ```bash
 # 方法1: 清除索引状态，重新索引
-rm data/indexed_files.json
+del data\indexed_files.json
 python -m examples.run_indexer
 
 # 方法2: 删除 OpenSearch 索引，重建
@@ -400,15 +437,30 @@ curl -X DELETE http://localhost:9200/wsj_news
 python run_pipeline.py --index-only
 ```
 
+### Q: 定时任务脚本报错？
+
+确保在项目根目录下运行，并以管理员身份运行 PowerShell：
+
+```powershell
+cd E:\Programming\Pycharm\WSJRAG
+.\scripts\schedule_pipeline.ps1
+```
+
 ---
 
 ## 开发计划
 
+- [x] Playwright 爬虫 (8个分类 + 单URL)
+- [x] OpenSearch 向量索引
 - [x] LlamaIndex RAG 集成
 - [x] 智能 Agent (FunctionAgent + QueryAnalyzer)
+- [x] 多语言支持 (中英文自动翻译)
+- [x] 独家新闻过滤
+- [x] 自动总结功能
+- [x] 时间感知 Agent
+- [x] Windows 定时任务
 - [ ] 本地 LLM 支持
 - [ ] 批量处理优化
-- [ ] 定时爬取调度
 - [ ] Agent 多轮对话记忆
 
 ---
