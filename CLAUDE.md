@@ -224,9 +224,26 @@ python run_pipeline.py -v
 基于 LlamaIndex FunctionAgent 的新闻问答 Agent。
 
 **组件:**
-- `tools.py`: NewsQueryTool - 支持语义/混合/时间搜索
+- `tools.py`: NewsQueryTool + QueryPreprocessor
 - `news_agent.py`: NewsAgent - LlamaIndex FunctionAgent 封装
 - `cli.py`: 命令行交互界面
+
+**核心功能:**
+- 🌐 **多语言支持**: 用户可用中文或英文提问，查询自动翻译为英文进行检索
+- 🕐 **时间感知**: 查询自动添加当前时间上下文
+- 🇨🇳 **中文回答**: 无论输入语言，始终用中文回答
+- 📝 **高token限制**: max_tokens=4096，支持详细回答
+
+**QueryPreprocessor 工作流程:**
+```
+用户输入 (中文/英文)
+    ↓
+LLM 翻译 + 重写
+    ↓
+添加时间上下文 (January 25, 2026)
+    ↓
+英文查询 → Embedding → OpenSearch
+```
 
 **使用方法:**
 ```bash
@@ -236,23 +253,24 @@ python -m src.agent.cli
 # 详细模式 (显示 agent 推理过程)
 python -m src.agent.cli --verbose
 
-# 单次查询模式
-python -m src.agent.cli --query "What's the latest on AI?"
+# 单次查询模式 (支持中文)
+python -m src.agent.cli --query "特斯拉最近有什么新闻？"
 ```
 
 **NewsQueryTool 参数:**
 | 参数 | 说明 |
 |------|------|
-| `query` | 搜索查询 |
+| `query` | 搜索查询 (支持中英文，自动翻译) |
 | `mode` | semantic / hybrid / recent |
 | `category` | 分类筛选 (tech, finance, etc.) |
 | `hours_ago` | 时间范围 (recent 模式) |
 | `max_results` | 最大结果数 (1-20) |
 
-**Agent 系统提示:**
+**Agent 特性:**
 - 自动选择最佳搜索模式
 - 引用文章标题和 URL
 - 提供上下文分析
+- **所有回答使用中文**
 
 ## 下一步开发
 

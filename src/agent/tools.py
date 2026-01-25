@@ -6,22 +6,97 @@ Provides sophisticated news search capabilities including:
     - Hybrid search (semantic + keyword)
     - Time-based filtering
     - Category filtering
+    - Query preprocessing (translation + time context)
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
 from llama_index.core.tools import FunctionTool
 
 from src.clients.embedding import EmbeddingService, get_embedding_service
+from src.clients.llm import LLMService, get_llm_service
 from src.clients.opensearch import get_opensearch_client
 from src.storage.repository import NewsRepository
 
 logger = logging.getLogger(__name__)
+
+
+# ===== Query Preprocessing =====
+
+QUERY_REWRITE_PROMPT = """You are a query preprocessor for a news search system. Your task is to:
+1. If the query is in Chinese or any non-English language, translate it to English
+2. Rewrite the query to be more search-friendly
+3. Add temporal context if relevant
+
+Current date and time: {current_time}
+
+User query: {query}
+
+Output ONLY the rewritten English query, nothing else. Keep it concise (under 50 words).
+If the query mentions "recent", "latest", "today", "this week", etc., incorporate the current date context.
+
+Examples:
+- "最近特斯拉的新闻" -> "Tesla news and updates January 2026"
+- "trump policy" -> "Trump administration policy updates January 2026"
+- "AI regulations" -> "artificial intelligence AI regulations policy"
+"""
+
+
+class QueryPreprocessor:
+    """
+    Preprocesses user queries before embedding.
+
+    Handles:
+        - Translation from any language to English
+        - Query rewriting for better search results
+        - Adding temporal context
+    """
+
+    def __init__(self, llm_service: Optional[LLMService] = None) -> None:
+        """Initialize the query preprocessor."""
+        self._llm_service = llm_service
+
+    @property
+    def llm_service(self) -> LLMService:
+        """Lazy initialization of LLM service."""
+        if self._llm_service is None:
+            self._llm_service = get_llm_service()
+        return self._llm_service
+
+    def preprocess(self, query: str) -> str:
+        """
+        Preprocess a query for search.
+
+        Translates to English if needed and adds time context.
+
+        Args:
+            query: Original user query (any language)
+
+        Returns:
+            Preprocessed English query with time context
+        """
+        if not query or not query.strip():
+            return query
+
+        current_time = datetime.now().strftime("%B %d, %Y %H:%M")
+        prompt = QUERY_REWRITE_PROMPT.format(
+            current_time=current_time,
+            query=query,
+        )
+
+        try:
+            rewritten = self.llm_service.generate(prompt, max_tokens=100, temperature=0.1)
+            logger.info(f"Query preprocessed: '{query}' -> '{rewritten}'")
+            return rewritten
+        except Exception as e:
+            logger.warning(f"Query preprocessing failed, using original: {e}")
+            return query
 
 
 class SearchMode(str, Enum):
@@ -73,6 +148,11 @@ class NewsQueryTool:
         - hybrid: Combined vector + BM25 keyword search
         - recent: Time-based retrieval with optional filters
 
+    Features:
+        - Automatic query translation (Chinese -> English)
+        - Query rewriting with temporal context
+        - Multiple search strategies
+
     Example:
         >>> tool = NewsQueryTool()
         >>> results = tool.query(
@@ -87,10 +167,12 @@ class NewsQueryTool:
         self,
         embedding_service: Optional[EmbeddingService] = None,
         repository: Optional[NewsRepository] = None,
+        query_preprocessor: Optional[QueryPreprocessor] = None,
     ) -> None:
         """Initialize the news query tool."""
         self._embedding_service = embedding_service
         self._repository = repository
+        self._query_preprocessor = query_preprocessor
 
     @property
     def embedding_service(self) -> EmbeddingService:
@@ -106,6 +188,13 @@ class NewsQueryTool:
             os_client = get_opensearch_client()
             self._repository = NewsRepository(os_client)
         return self._repository
+
+    @property
+    def query_preprocessor(self) -> QueryPreprocessor:
+        """Lazy initialization of query preprocessor."""
+        if self._query_preprocessor is None:
+            self._query_preprocessor = QueryPreprocessor()
+        return self._query_preprocessor
 
     def query(
         self,
@@ -152,27 +241,35 @@ class NewsQueryTool:
         if mode not in ["semantic", "hybrid", "recent"]:
             mode = "hybrid"
 
+        # Preprocess query: translate to English and add time context
+        original_query = query
+        if query.strip():
+            processed_query = self.query_preprocessor.preprocess(query)
+        else:
+            processed_query = query
+
         logger.info(
-            f"News query: mode={mode}, query='{query[:50]}...', category={category}"
+            f"News query: mode={mode}, original='{original_query[:50]}', "
+            f"processed='{processed_query[:50]}', category={category}"
         )
 
         try:
             if mode == "recent":
                 results = self._search_recent(
-                    query=query,
+                    query=processed_query,
                     category=category,
                     hours_ago=hours_ago or 72,
                     limit=max_results,
                 )
             elif mode == "semantic":
                 results = self._search_semantic(
-                    query=query,
+                    query=processed_query,
                     category=category,
                     k=max_results,
                 )
             else:  # hybrid
                 results = self._search_hybrid(
-                    query=query,
+                    query=processed_query,
                     category=category,
                     k=max_results,
                 )

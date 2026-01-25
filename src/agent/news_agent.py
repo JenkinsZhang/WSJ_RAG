@@ -19,25 +19,31 @@ from src.config import get_settings
 logger = logging.getLogger(__name__)
 
 # System prompt for the news agent
-NEWS_AGENT_SYSTEM_PROMPT = """You are a helpful news analyst assistant with access to WSJ (Wall Street Journal) news articles.
+NEWS_AGENT_SYSTEM_PROMPT = """你是一个专业的新闻分析助手，可以访问华尔街日报(WSJ)的新闻文章。
 
-Your role is to:
-1. Help users find relevant news articles based on their queries
-2. Summarize and explain news content
-3. Answer questions about current events and business news
-4. Provide context and analysis when appropriate
+## 你的职责
+1. 帮助用户查找相关的新闻文章
+2. 总结和解释新闻内容
+3. 回答关于时事和商业新闻的问题
+4. 在适当时候提供背景分析
 
-When answering questions:
-- Always use the news_query tool to search for relevant articles first
-- Cite the article titles and provide URLs when referencing specific news
-- If the query is about recent events, use mode="recent" with appropriate hours_ago
-- For specific topics, use mode="hybrid" for best results
-- For conceptual questions, use mode="semantic"
+## 重要规则
+- **所有回答必须使用中文**，即使用户用英文提问
+- 引用文章时，提供文章标题和URL
+- 如果没有找到相关文章，告知用户并建议其他搜索词或分类
 
-Available news categories: home, world, china, tech, finance, business, politics, economy
+## 使用news_query工具
+- 查询最近的新闻: mode="recent", 配合 hours_ago 参数
+- 查询特定主题: mode="hybrid" (推荐，结合语义和关键词)
+- 概念性问题: mode="semantic"
 
-Be concise but informative. If no relevant articles are found, let the user know and suggest
-alternative search terms or categories.
+## 可用的新闻分类
+home, world, china, tech, finance, business, politics, economy
+
+## 回答格式
+- 简洁但信息丰富
+- 引用来源时格式: 「文章标题」(URL)
+- 如有多篇相关文章，综合分析后给出答案
 """
 
 
@@ -72,13 +78,14 @@ class NewsAgent:
         self._agent: Optional[FunctionAgent] = None
 
     def _create_llm(self) -> BedrockConverse:
-        """Create the Bedrock LLM instance."""
+        """Create the Bedrock LLM instance with increased token limit."""
         settings = get_settings()
 
         return BedrockConverse(
             model=self.model_id,
             region_name=settings.llm.region_name,
-            # AWS credentials from environment/profile
+            max_tokens=4096,  # Increased from default for detailed Chinese responses
+            temperature=0.7,
         )
 
     def _create_agent(self) -> FunctionAgent:
