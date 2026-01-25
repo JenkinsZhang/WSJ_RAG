@@ -145,7 +145,7 @@ def _load_from_env() -> Settings:
 
     llm = LLMSettings(
         region_name=os.getenv("AWS_REGION", "us-east-1"),
-        model_id=os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0"),
+        model_id=os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "512")),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
         max_workers=int(os.getenv("LLM_MAX_WORKERS", "5")),
