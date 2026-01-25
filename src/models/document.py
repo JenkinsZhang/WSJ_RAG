@@ -17,6 +17,8 @@ from datetime import datetime
 from typing import Optional
 import hashlib
 
+from src.utils.url import normalize_url
+
 
 @dataclass(frozen=True)
 class NewsArticle:
@@ -58,16 +60,17 @@ class NewsArticle:
 
     def generate_id(self) -> str:
         """
-        Generate a unique article ID from the URL.
+        Generate a unique article ID from the normalized URL.
 
         Returns:
-            str: MD5 hash of the URL as hexadecimal string
+            str: MD5 hash of the normalized URL as hexadecimal string
 
         Note:
-            MD5 is used for fast hashing, not security.
-            Collisions are acceptable for this use case.
+            URL is normalized (query params removed) before hashing
+            to ensure the same article always gets the same ID.
         """
-        return hashlib.md5(self.url.encode()).hexdigest()
+        clean_url = normalize_url(self.url)
+        return hashlib.md5(clean_url.encode()).hexdigest()
 
 
 @dataclass
@@ -138,8 +141,9 @@ class ProcessedDocument:
     is_exclusive: bool = False
 
     def generate_id(self) -> str:
-        """Generate a unique article ID from the URL."""
-        return hashlib.md5(self.url.encode()).hexdigest()
+        """Generate a unique article ID from the normalized URL."""
+        clean_url = normalize_url(self.url)
+        return hashlib.md5(clean_url.encode()).hexdigest()
 
     @property
     def chunk_count(self) -> int:

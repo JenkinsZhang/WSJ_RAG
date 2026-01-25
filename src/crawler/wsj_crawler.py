@@ -25,6 +25,8 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 
+from src.utils.url import normalize_url
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
@@ -85,8 +87,9 @@ class Article:
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def generate_id(self) -> str:
-        """生成文章唯一ID"""
-        return hashlib.md5(self.url.encode()).hexdigest()[:12]
+        """生成文章唯一ID（基于清理后的URL）"""
+        clean_url = normalize_url(self.url)
+        return hashlib.md5(clean_url.encode()).hexdigest()[:12]
 
     def to_dict(self) -> dict:
         """转为字典"""
@@ -121,9 +124,7 @@ class WSJCrawler:
 
     def _normalize_url(self, url: str) -> str:
         """标准化URL用于去重（去掉参数部分）"""
-        parsed = urlparse(url)
-        # 只保留 scheme + netloc + path
-        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip('/')
+        return normalize_url(url)
 
     def _load_crawled_urls(self):
         """加载已爬取的URL列表"""
@@ -422,7 +423,7 @@ class WSJCrawler:
 
             return Article(
                 title=title,
-                url=link.url,
+                url=normalize_url(link.url),  # 清理URL参数
                 content=data['content'],
                 author=data['author'] or None,
                 published_at=data['published_at'] or None,
