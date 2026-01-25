@@ -131,6 +131,13 @@ class IndexSchema:
             "author": {
                 "type": "keyword"
             },
+            "subtitle": {
+                "type": "text",
+                "analyzer": "news_analyzer"
+            },
+            "is_exclusive": {
+                "type": "boolean"
+            },
             "published_at": {
                 "type": "date",
                 "format": "strict_date_optional_time||epoch_millis"

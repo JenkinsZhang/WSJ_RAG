@@ -92,6 +92,8 @@ class NewsRepository:
                 "source": doc.source,
                 "category": doc.category,
                 "author": doc.author,
+                "subtitle": doc.subtitle,
+                "is_exclusive": doc.is_exclusive,
                 "published_at": doc.published_at,
                 "crawled_at": datetime.utcnow().isoformat(),
                 "content": chunk.content,

@@ -224,6 +224,8 @@ class EmbeddingService:
             category=article.category,
             author=article.author,
             published_at=article.published_at.isoformat() if article.published_at else None,
+            subtitle=article.subtitle,
+            is_exclusive=article.is_exclusive,
         )
 
     def process_articles_batch(

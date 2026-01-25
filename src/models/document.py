@@ -53,6 +53,8 @@ class NewsArticle:
     author: Optional[str] = None
     published_at: Optional[datetime] = None
     summary: Optional[str] = None
+    subtitle: Optional[str] = None
+    is_exclusive: bool = False
 
     def generate_id(self) -> str:
         """
@@ -132,6 +134,8 @@ class ProcessedDocument:
     category: Optional[str] = None
     author: Optional[str] = None
     published_at: Optional[str] = None
+    subtitle: Optional[str] = None
+    is_exclusive: bool = False
 
     def generate_id(self) -> str:
         """Generate a unique article ID from the URL."""
