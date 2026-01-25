@@ -296,6 +296,11 @@ class WSJCrawler:
 
     def _is_article_url(self, url: str) -> bool:
         """检查是否是文章URL"""
+        # 必须是 WSJ 域名
+        parsed = urlparse(url)
+        if parsed.netloc and not parsed.netloc.endswith('wsj.com'):
+            return False
+
         # 排除非文章页面
         exclude_patterns = ['/video/', '/livecoverage/', '/podcasts/', '/buyside/', '/coupons/']
         for pattern in exclude_patterns:
