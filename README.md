@@ -119,6 +119,12 @@ python -m src.crawler.wsj_crawler all
 # 爬取单个分类
 python -m src.crawler.wsj_crawler tech
 python -m src.crawler.wsj_crawler china
+
+# 爬取单个 URL (自动推断分类)
+python -m src.crawler.wsj_crawler --url "https://www.wsj.com/tech/ai/article-slug"
+
+# 爬取单个 URL (指定分类)
+python -m src.crawler.wsj_crawler --url "https://www.wsj.com/..." --category-for-url tech
 ```
 
 **注意**: 首次运行需要手动登录 WSJ 账号，登录状态会保存在 Chrome profile 中。
@@ -143,6 +149,12 @@ articles/
 ```bash
 # 索引所有待处理文章
 python -m examples.run_indexer
+
+# 索引单个 JSON 文件
+python -m examples.run_indexer --file articles/tech/2026-01-25/article.json
+
+# 强制重新索引 (即使已索引)
+python -m examples.run_indexer --file articles/tech/2026-01-25/article.json --force
 
 # 只索引特定分类
 python -m examples.run_indexer --category tech

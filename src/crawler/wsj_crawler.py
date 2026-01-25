@@ -565,24 +565,153 @@ class WSJCrawler:
             self._save_crawled_urls()
             self.disconnect()
 
+    def crawl_url(self, url: str, category: Optional[str] = None) -> Optional[Article]:
+        """
+        爬取单个 URL
+
+        Args:
+            url: 文章 URL
+            category: 文章分类 (可选，会尝试从 URL 自动推断)
+
+        Returns:
+            Article: 爬取的文章，失败返回 None
+        """
+        # 标准化 URL
+        normalized_url = self._normalize_url(url)
+
+        # 检查是否已爬取
+        if normalized_url in self._crawled_urls:
+            logger.warning(f"URL 已爬取过: {url}")
+            # 仍然继续爬取，但会提示
+
+        # 自动推断分类
+        if not category:
+            category = self._infer_category_from_url(url)
+            logger.info(f"自动推断分类: {category}")
+
+        if not self.connect():
+            return None
+
+        try:
+            # 创建 ArticleLink
+            link = ArticleLink(
+                title="",  # 会从页面获取
+                url=url,
+                is_exclusive=False,
+                priority=1,
+            )
+
+            # 爬取文章
+            article = self._scrape_article(link, category)
+
+            if article and article.content:
+                # 保存文章
+                filepath = self._save_article(article)
+                logger.info(f"保存: {filepath}")
+
+                # 记录已爬取
+                self._crawled_urls.add(normalized_url)
+                self._save_crawled_urls()
+
+                return article
+            else:
+                logger.error(f"爬取失败或内容为空: {url}")
+                return None
+
+        finally:
+            self.disconnect()
+
+    def _infer_category_from_url(self, url: str) -> str:
+        """从 URL 推断文章分类"""
+        url_lower = url.lower()
+
+        category_patterns = {
+            "tech": ["/tech/", "/technology/"],
+            "finance": ["/finance/", "/markets/"],
+            "business": ["/business/"],
+            "politics": ["/politics/"],
+            "economy": ["/economy/"],
+            "world": ["/world/"],
+            "china": ["/china/"],
+        }
+
+        for category, patterns in category_patterns.items():
+            for pattern in patterns:
+                if pattern in url_lower:
+                    return category
+
+        return "uncategorized"
+
 
 # ============== 主函数 ==============
 
 def main():
     """主函数"""
-    import sys
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="WSJ 爬虫",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python -m src.crawler.wsj_crawler tech          # 爬取 tech 分类
+  python -m src.crawler.wsj_crawler all           # 爬取所有分类
+  python -m src.crawler.wsj_crawler --url <url>   # 爬取单个 URL
+  python -m src.crawler.wsj_crawler --url <url> --category tech
+        """,
+    )
+
+    parser.add_argument(
+        "category",
+        nargs="?",
+        choices=list(PAGES_TO_CRAWL.keys()) + ["all"],
+        help="要爬取的分类 (或 'all' 爬取全部)",
+    )
+
+    parser.add_argument(
+        "--url", "-u",
+        type=str,
+        help="爬取单个文章 URL",
+    )
+
+    parser.add_argument(
+        "--category-for-url", "-c",
+        type=str,
+        choices=list(PAGES_TO_CRAWL.keys()) + ["uncategorized"],
+        help="为 URL 指定分类 (默认自动推断)",
+    )
+
+    args = parser.parse_args()
 
     print("\n" + "=" * 60)
-    print("  WSJ 爬虫 MVP")
+    print("  WSJ 爬虫")
     print("=" * 60)
     print(f"\n输出目录: {ARTICLES_DIR}")
     print(f"浏览器 Profile: {USER_DATA_DIR}")
-    print(f"\n可用分类: {', '.join(PAGES_TO_CRAWL.keys())}")
 
-    # 命令行参数
-    if len(sys.argv) > 1:
-        category = sys.argv[1].lower()
-        if category == "all":
+    # 模式1: 爬取单个 URL
+    if args.url:
+        print(f"\n[模式] 爬取单个 URL")
+        print(f"URL: {args.url}")
+        if args.category_for_url:
+            print(f"分类: {args.category_for_url}")
+
+        crawler = WSJCrawler()
+        article = crawler.crawl_url(args.url, category=args.category_for_url)
+
+        if article:
+            print(f"\n{'='*60}")
+            print(f"爬取成功!")
+            print(f"  标题: {article.title}")
+            print(f"  分类: {article.category}")
+            print(f"  内容长度: {len(article.content)} 字符")
+        else:
+            print(f"\n爬取失败")
+
+    # 模式2: 爬取分类
+    elif args.category:
+        if args.category == "all":
+            print(f"\n可用分类: {', '.join(PAGES_TO_CRAWL.keys())}")
             print("\n[模式] 爬取所有分类")
             crawler = WSJCrawler()
             results = crawler.crawl_all()
@@ -594,18 +723,15 @@ def main():
             for cat, articles in results.items():
                 print(f"  {cat}: {len(articles)} 篇")
         else:
-            print(f"\n[模式] 爬取单个分类: {category}")
+            print(f"\n[模式] 爬取单个分类: {args.category}")
             crawler = WSJCrawler()
-            articles = crawler.crawl_single(category)
+            articles = crawler.crawl_single(args.category)
             print(f"\n完成: {len(articles)} 篇文章")
+
+    # 无参数: 显示帮助
     else:
-        print("\n用法:")
-        print("  python -m src.crawler.wsj_crawler <category>")
-        print("  python -m src.crawler.wsj_crawler all")
-        print("\n示例:")
-        print("  python -m src.crawler.wsj_crawler tech")
-        print("  python -m src.crawler.wsj_crawler china")
-        print("  python -m src.crawler.wsj_crawler all")
+        print(f"\n可用分类: {', '.join(PAGES_TO_CRAWL.keys())}")
+        parser.print_help()
 
 
 if __name__ == "__main__":

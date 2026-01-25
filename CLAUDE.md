@@ -112,11 +112,19 @@ articles/**/*.json (爬取的文章)
 **已实现功能:**
 - Playwright 持久化浏览器 (保存登录状态)
 - 8个分类爬取: home, world, china, tech, finance, business, politics, economy
-- 用法: `python -m src.crawler.wsj_crawler <category|all>`
+- **单 URL 爬取**: `python -m src.crawler.wsj_crawler --url <url>` (自动推断分类)
 - URL去重 (crawled_urls.json)
 - 文章内容提取: 标题、副标题、作者、发布时间、正文
 - EXCLUSIVE 文章优先级排序
 - 自动滚动加载更多内容
+
+**用法:**
+```bash
+python -m src.crawler.wsj_crawler tech              # 爬取分类
+python -m src.crawler.wsj_crawler all               # 爬取所有
+python -m src.crawler.wsj_crawler --url <url>       # 爬取单个 URL
+python -m src.crawler.wsj_crawler --url <url> -c tech  # 指定分类
+```
 
 **爬取数据格式:**
 ```json
@@ -157,6 +165,12 @@ articles/**/*.json (爬取的文章)
 ```bash
 # 索引所有待处理文章
 python -m examples.run_indexer
+
+# 索引单个 JSON 文件
+python -m examples.run_indexer --file articles/tech/2026-01-25/article.json
+
+# 强制重新索引
+python -m examples.run_indexer --file <path> --force
 
 # 只索引特定分类
 python -m examples.run_indexer --category tech

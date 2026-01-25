@@ -5,6 +5,9 @@ Usage:
     # Index all pending articles
     python -m examples.run_indexer
 
+    # Index a single JSON file
+    python -m examples.run_indexer --file articles/tech/2026-01-25/article.json
+
     # Index with retry of failed files
     python -m examples.run_indexer --retry-failed
 
@@ -96,6 +99,11 @@ def main():
         help="Directory containing article JSON files (default: articles)",
     )
     parser.add_argument(
+        "--file", "-f",
+        type=str,
+        help="Index a single JSON file (updates indexed_files.json)",
+    )
+    parser.add_argument(
         "--category",
         help="Only index specific category (e.g., tech, finance)",
     )
@@ -129,6 +137,11 @@ def main():
         action="store_true",
         help="Skip service health checks",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-index even if already indexed (use with --file)",
+    )
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -159,6 +172,60 @@ def main():
         count = state.clear_failed()
         state.save()
         print(f"Cleared {count} failed entries")
+        return
+
+    # Handle single file indexing
+    if args.file:
+        file_path = Path(args.file)
+        if not file_path.exists():
+            print(f"Error: File not found: {file_path}")
+            sys.exit(1)
+
+        # Check if already indexed
+        if state.is_indexed(file_path) and not args.force:
+            info = state.get_indexed_info(file_path)
+            print(f"File already indexed:")
+            print(f"  Article ID: {info.get('article_id', 'N/A')}")
+            print(f"  Chunks: {info.get('chunks', 'N/A')}")
+            print(f"  Indexed at: {info.get('indexed_at', 'N/A')}")
+            print("\nUse --force to re-index")
+            return
+
+        if args.force and state.is_indexed(file_path):
+            print(f"Force re-indexing: {file_path}")
+
+        # Check services before indexing
+        if not args.skip_check:
+            if not check_services():
+                print("Service check failed. Use --skip-check to bypass.")
+                sys.exit(1)
+
+        # Ensure index exists and schema is current
+        client = get_opensearch_client()
+        schema_result = client.ensure_schema_current()
+        if schema_result["status"] == "created":
+            print(f"Created OpenSearch index: {schema_result['index']}")
+        elif schema_result["status"] == "updated":
+            print(f"Updated schema, added fields: {schema_result['fields_added']}")
+
+        # Index single file
+        print(f"\nIndexing: {file_path}")
+        print("-" * 50)
+
+        pipeline = IndexPipeline(state_file="data/indexed_files.json")
+        result = pipeline.index_single(file_path, skip_if_indexed=False)
+
+        print("-" * 50)
+        if result.success:
+            print(f"\nSuccess!")
+            print(f"  Article ID: {result.article_id}")
+            print(f"  Title: {result.title}")
+            print(f"  Chunks: {result.chunks}")
+            print(f"  Time: {result.elapsed_seconds:.1f}s")
+        else:
+            print(f"\nFailed: {result.error}")
+            sys.exit(1)
+
         return
 
     # Get pending files
