@@ -23,7 +23,7 @@ from src.models import NewsArticle, ProcessedDocument, ProcessedChunk
 from src.utils.text import TextChunker
 
 if TYPE_CHECKING:
-    from src.services.llm import LLMService
+    from src.clients.llm import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ class EmbeddingService:
             ProcessedDocument: Ready for indexing
 
         Example:
-            >>> from src.services import EmbeddingService, LLMService
+            >>> from src.clients import EmbeddingService, LLMService
             >>> embed_svc = EmbeddingService()
             >>> llm_svc = LLMService()
             >>> doc = embed_svc.process_document(article, llm_svc)

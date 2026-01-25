@@ -19,9 +19,9 @@ from typing import Optional
 
 from src.indexer.loader import ArticleLoader, get_article_loader
 from src.indexer.state import IndexState
-from src.services.embedding import EmbeddingService, get_embedding_service
-from src.services.llm import LLMService, get_llm_service
-from src.storage.client import get_opensearch_client
+from src.clients.embedding import EmbeddingService, get_embedding_service
+from src.clients.llm import LLMService, get_llm_service
+from src.clients.opensearch import get_opensearch_client
 from src.storage.repository import NewsRepository
 
 logger = logging.getLogger(__name__)

@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Optional
 
 from src.models import ProcessedDocument, SearchResult
-from src.storage.client import OpenSearchClient, get_opensearch_client
+from src.clients.opensearch import OpenSearchClient, get_opensearch_client
 
 logger = logging.getLogger(__name__)
 

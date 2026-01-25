@@ -38,7 +38,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.crawler.wsj_crawler import WSJCrawler, PAGES_TO_CRAWL, Article
 from src.indexer import IndexPipeline, IndexState
-from src.storage.client import get_opensearch_client
+from src.clients.opensearch import get_opensearch_client
 
 
 # ============== 日志配置 ==============
@@ -141,7 +141,7 @@ def check_services(logger: logging.Logger) -> dict:
 
     # 检查 Embedding 服务
     try:
-        from src.services.embedding import get_embedding_service
+        from src.clients.embedding import get_embedding_service
         embed_svc = get_embedding_service()
         health = embed_svc.health_check()
         if health.get("status") == "healthy":
@@ -154,7 +154,7 @@ def check_services(logger: logging.Logger) -> dict:
 
     # 检查 LLM 服务
     try:
-        from src.services.llm import get_llm_service
+        from src.clients.llm import get_llm_service
         llm_svc = get_llm_service()
         health = llm_svc.health_check()
         if health.get("status") == "healthy":

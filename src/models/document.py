@@ -123,7 +123,7 @@ class ProcessedDocument:
         published_at: Publication timestamp (ISO format string)
 
     Usage:
-        >>> from src.services import EmbeddingService, LLMService
+        >>> from src.clients import EmbeddingService, LLMService
         >>> embedding_svc = EmbeddingService()
         >>> llm_svc = LLMService()
         >>> doc = embedding_svc.process_document(article, llm_svc)

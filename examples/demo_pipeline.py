@@ -26,8 +26,8 @@ from datetime import datetime
 
 from src.config import get_settings
 from src.models import NewsArticle
-from src.storage import OpenSearchClient, NewsRepository
-from src.services import EmbeddingService, LLMService
+from src.storage import NewsRepository
+from src.clients import OpenSearchClient, EmbeddingService, LLMService
 
 
 def main():

@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.indexer import IndexPipeline, IndexState
-from src.storage.client import get_opensearch_client
+from src.clients.opensearch import get_opensearch_client
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -58,7 +58,7 @@ def check_services() -> bool:
 
     # Check Embedding service
     try:
-        from src.services.embedding import get_embedding_service
+        from src.clients.embedding import get_embedding_service
         embed_svc = get_embedding_service()
         health = embed_svc.health_check()
         if health.get("status") != "healthy":
@@ -71,7 +71,7 @@ def check_services() -> bool:
 
     # Check LLM service
     try:
-        from src.services.llm import get_llm_service
+        from src.clients.llm import get_llm_service
         llm_svc = get_llm_service()
         health = llm_svc.health_check()
         if health.get("status") != "healthy":
