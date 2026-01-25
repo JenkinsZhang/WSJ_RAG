@@ -171,6 +171,35 @@ python -m examples.run_indexer --dry-run
 
 **预估处理时间 (单篇文章, 约3个chunks):** 10-17秒
 
+### 7. 完整数据流程脚本
+
+`run_pipeline.py` - 端到端流程: 爬虫 → 数据处理 → OpenSearch
+
+**使用方法:**
+```bash
+# 完整流程 (爬取所有分类并索引)
+python run_pipeline.py
+
+# 只处理特定分类
+python run_pipeline.py --category tech finance
+
+# 限制每分类爬取数量
+python run_pipeline.py --max-articles 5
+
+# 只爬取不索引
+python run_pipeline.py --crawl-only
+
+# 只索引不爬取
+python run_pipeline.py --index-only
+
+# 详细日志
+python run_pipeline.py -v
+```
+
+**日志:**
+- 控制台: 带颜色的实时日志
+- 文件: `logs/pipeline_YYYYMMDD_HHMMSS.log`
+
 ## 下一步开发
 
 ### TODO
