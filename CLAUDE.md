@@ -1,6 +1,6 @@
 # WSJ RAG 项目状态
 
-> 最后更新：2026-01-25
+> 最后更新：2026-01-26
 
 ## 项目概述
 
@@ -18,6 +18,7 @@
 | Agent | LlamaIndex FunctionAgent | ✅ 完成 |
 | LLM | AWS Bedrock Claude | ✅ 完成 |
 | API | FastAPI | ✅ 完成 |
+| Chat UI | HTML + SSE 流式输出 | ✅ 完成 |
 | 定时任务 | Windows Task Scheduler | ✅ 完成 |
 
 ## 项目结构
@@ -50,7 +51,8 @@ WSJRAG/
 │   │   └── pipeline.py          # 索引主流程
 │   ├── agent/                   # LlamaIndex Agent 模块
 │   │   ├── tools.py             # NewsQueryTool + QueryAnalyzer
-│   │   ├── news_agent.py        # FunctionAgent 封装
+│   │   ├── news_agent.py        # FunctionAgent 封装 (含流式输出)
+│   │   ├── progress.py          # 工具进度跟踪模块
 │   │   └── cli.py               # 命令行交互界面
 │   └── utils/
 │       ├── text.py              # 文本分块器
@@ -62,6 +64,8 @@ WSJRAG/
 ├── examples/
 │   ├── demo_pipeline.py         # 完整流程演示
 │   └── run_indexer.py           # 索引脚本 (支持单文件)
+├── static/
+│   └── chat.html                # Chat UI 前端页面
 ├── articles/                    # 爬取的文章 (按分类/日期组织)
 ├── data/
 │   ├── crawled_urls.json        # 爬虫URL去重
@@ -275,10 +279,55 @@ python run_pipeline.py -v                        # 详细日志
 | `/search` | POST | 语义/混合搜索 |
 | `/news/recent` | GET | 获取最近新闻 |
 | `/stats` | GET | 索引统计 |
+| `/chat` | POST | Agent 问答 (非流式) |
+| `/chat/stream` | POST | Agent 问答 (SSE 流式) |
+| `/chat-ui` | GET | 聊天界面 HTML 页面 |
 
 ---
 
-### 7. 定时任务 (`scripts/schedule_pipeline.ps1`)
+### 7. Chat UI (`static/chat.html`)
+
+基于 SSE 的流式聊天界面。
+
+**功能特性:**
+- 流式输出回复 (逐字显示)
+- 实时显示工具执行步骤
+- 支持流式/非流式模式切换
+- Markdown 渲染
+- 预设问题建议
+
+**访问方式:**
+```bash
+# 启动服务
+python -m uvicorn main:app --reload
+
+# 浏览器访问
+http://localhost:8000/chat-ui
+```
+
+**SSE 事件类型:**
+| 类型 | 说明 |
+|------|------|
+| `step` | Agent 步骤 (thinking, tool_call, tool_result) |
+| `tool_progress` | 工具内部步骤 (analyzing, embedding, searching, summarizing) |
+| `delta` | 流式文本片段 |
+| `done` | 完成，包含最终回复 |
+| `error` | 错误信息 |
+
+**工具进度显示:**
+```
+[⟳] 正在思考...
+[🔧] 调用工具: news_query
+    ├─ [🔍] 分析查询意图...
+    ├─ [📊] 生成查询向量...
+    ├─ [🔎] 执行混合搜索...
+    └─ [📝] 生成总结...
+[✓] 返回结果
+```
+
+---
+
+### 8. 定时任务 (`scripts/schedule_pipeline.ps1`)
 
 Windows 任务计划程序脚本。
 
@@ -337,6 +386,9 @@ articles/**/*.json (爬取的文章)
 - [x] 单文件索引 (`--file` 参数)
 - [x] 强制重新索引 (`--force` 参数)
 - [x] Windows 定时任务脚本
+- [x] Chat UI 前端页面
+- [x] SSE 流式输出
+- [x] 工具内部进度跟踪
 
 ### TODO
 - [ ] 批量处理优化 (batch_size参数)
