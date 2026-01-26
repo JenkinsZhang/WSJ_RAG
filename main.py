@@ -12,14 +12,22 @@ Usage:
 """
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, AsyncGenerator
 from datetime import datetime
+import logging
+import json
 
 from src.config import get_settings
 from src.models import NewsArticle
 from src.storage.repository import NewsRepository
 from src.clients import OpenSearchClient, EmbeddingService, LLMService
+from src.agent.news_agent import NewsAgent
+
+logger = logging.getLogger(__name__)
 
 # ===== Application Setup =====
 
@@ -29,11 +37,21 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Enable CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Lazy-loaded services
 _os_client: Optional[OpenSearchClient] = None
 _embedding_svc: Optional[EmbeddingService] = None
 _llm_svc: Optional[LLMService] = None
 _repo: Optional[NewsRepository] = None
+_news_agent: Optional[NewsAgent] = None
 
 
 def get_services():
@@ -227,3 +245,84 @@ async def get_stats():
         "document_count": doc_count,
         "size_bytes": stats.get("size_bytes", 0),
     }
+
+
+# ===== Chat Endpoint =====
+
+def get_agent() -> NewsAgent:
+    """Get or create NewsAgent singleton."""
+    global _news_agent
+    if _news_agent is None:
+        _news_agent = NewsAgent(verbose=False)
+    return _news_agent
+
+
+class ChatRequest(BaseModel):
+    """Request model for chat."""
+    message: str
+
+
+class ChatResponse(BaseModel):
+    """Response model for chat."""
+    response: str
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    Chat with the news agent.
+
+    Send a message and get an AI-powered response about WSJ news.
+    """
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    try:
+        agent = get_agent()
+        response = await agent.chat(request.message)
+        return ChatResponse(response=response)
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+async def generate_sse_events(message: str) -> AsyncGenerator[str, None]:
+    """Generate Server-Sent Events for streaming chat."""
+    agent = get_agent()
+
+    async for event in agent.chat_stream(message):
+        # Format as SSE: data: {json}\n\n
+        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    Stream chat with the news agent using Server-Sent Events.
+
+    Returns SSE stream with events:
+    - step: Intermediate steps (thinking, tool calls, tool results)
+    - delta: Streaming text chunks
+    - done: Final complete response
+    - error: Error message if something goes wrong
+    """
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    return StreamingResponse(
+        generate_sse_events(request.message),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+# ===== Static File Serving =====
+
+@app.get("/chat-ui")
+async def chat_ui():
+    """Serve the chat UI page."""
+    return FileResponse("static/chat.html")

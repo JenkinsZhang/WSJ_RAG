@@ -25,6 +25,10 @@ from src.clients.embedding import EmbeddingService, get_embedding_service
 from src.clients.llm import LLMService, get_llm_service
 from src.clients.opensearch import get_opensearch_client
 from src.storage.repository import NewsRepository
+from src.agent.progress import (
+    emit_progress, emit_analyzing, emit_embedding,
+    emit_searching, emit_summarizing, emit_processing
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +136,8 @@ class QueryAnalyzer:
         if not query or not query.strip():
             return QueryIntent(search_query=query)
 
+        emit_analyzing("分析查询意图...", f"原始查询: {query[:100]}")
+
         current_time = datetime.now().strftime("%B %d, %Y %H:%M")
         prompt = QUERY_ANALYSIS_PROMPT.format(
             current_time=current_time,
@@ -139,6 +145,7 @@ class QueryAnalyzer:
         )
 
         try:
+            emit_analyzing("调用 LLM 解析意图...", None)
             response = self.llm_service.generate(prompt, max_tokens=200, temperature=0.1)
 
             # Parse JSON response
@@ -151,6 +158,12 @@ class QueryAnalyzer:
             intent_data = json.loads(response)
             intent = QueryIntent.from_dict(intent_data)
 
+            emit_analyzing(
+                "意图解析完成",
+                f"搜索词: {intent.search_query[:50]}, 模式: {intent.mode}, "
+                f"独家: {intent.exclusive_only}, 需要总结: {intent.needs_summary}"
+            )
+
             logger.info(
                 f"Query analyzed: '{query[:50]}' -> "
                 f"mode={intent.mode}, exclusive={intent.exclusive_only}, "
@@ -160,9 +173,11 @@ class QueryAnalyzer:
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse query analysis JSON: {e}, using defaults")
+            emit_analyzing("意图解析失败，使用默认设置", str(e))
             return QueryIntent(search_query=query)
         except Exception as e:
             logger.warning(f"Query analysis failed: {e}, using defaults")
+            emit_analyzing("意图解析失败，使用默认设置", str(e))
             return QueryIntent(search_query=query)
 
     def summarize_results(self, results: list["NewsQueryResult"]) -> str:
@@ -177,6 +192,8 @@ class QueryAnalyzer:
         """
         if not results:
             return "没有找到相关新闻。"
+
+        emit_summarizing("准备生成新闻总结...", f"共 {len(results)} 篇文章")
 
         # Combine content from results
         content_parts = []
@@ -194,10 +211,13 @@ class QueryAnalyzer:
         prompt = SUMMARY_PROMPT.format(content=combined_content)
 
         try:
+            emit_summarizing("调用 LLM 生成总结...", None)
             summary = self.llm_service.generate(prompt, max_tokens=500, temperature=0.3)
+            emit_summarizing("总结生成完成", summary[:100] + "..." if len(summary) > 100 else summary)
             return summary
         except Exception as e:
             logger.warning(f"Failed to generate summary: {e}")
+            emit_summarizing("总结生成失败", str(e))
             return "无法生成总结。"
 
 
@@ -329,6 +349,8 @@ class NewsQueryTool:
         # Validate inputs
         max_results = max(1, min(20, max_results))
 
+        emit_processing("开始处理新闻查询...", f"查询: {query[:50]}")
+
         # Analyze query to extract intent
         intent = self.query_analyzer.analyze(query)
 
@@ -340,6 +362,12 @@ class NewsQueryTool:
 
         try:
             # Execute search based on detected mode
+            mode_names = {"recent": "时间排序", "semantic": "语义搜索", "hybrid": "混合搜索"}
+            emit_searching(
+                f"执行{mode_names.get(intent.mode, intent.mode)}...",
+                f"搜索词: {intent.search_query[:50]}"
+            )
+
             if intent.mode == "recent":
                 results = self._search_recent(
                     query=intent.search_query,
@@ -363,7 +391,13 @@ class NewsQueryTool:
                     exclusive_only=intent.exclusive_only,
                 )
 
+            emit_searching(
+                f"搜索完成，找到 {len(results)} 篇文章",
+                ", ".join([r.title[:30] for r in results[:3]]) + ("..." if len(results) > 3 else "") if results else None
+            )
+
             if not results:
+                emit_processing("未找到相关文章", None)
                 return f"No news articles found for query: '{query}'"
 
             # Build output
@@ -383,10 +417,12 @@ class NewsQueryTool:
                 output_parts.append(result.to_text())
                 output_parts.append("")
 
+            emit_processing("查询处理完成", f"返回 {len(results)} 篇文章")
             return "\n".join(output_parts)
 
         except Exception as e:
             logger.error(f"News query failed: {e}")
+            emit_processing("查询处理失败", str(e))
             return f"Error searching news: {str(e)}"
 
     def _search_semantic(
@@ -401,9 +437,12 @@ class NewsQueryTool:
             return []
 
         # Generate query embedding
+        emit_embedding("生成查询向量...", f"文本长度: {len(query)} 字符")
         query_vector = self.embedding_service.embed_text(query)
+        emit_embedding("向量生成完成", f"维度: {len(query_vector)}")
 
         # Search with filters
+        emit_searching("执行向量搜索...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
         search_results = self.repository.search_by_vector(
             query_vector,
             k=k * 2,
@@ -447,9 +486,12 @@ class NewsQueryTool:
             return []
 
         # Generate query embedding
+        emit_embedding("生成查询向量...", f"文本长度: {len(query)} 字符")
         query_vector = self.embedding_service.embed_text(query)
+        emit_embedding("向量生成完成", f"维度: {len(query_vector)}")
 
         # Hybrid search with filters
+        emit_searching("执行混合搜索 (向量 + BM25)...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
         search_results = self.repository.hybrid_search(
             query_text=query,
             query_vector=query_vector,
@@ -493,6 +535,10 @@ class NewsQueryTool:
         exclusive_only: bool = False,
     ) -> list[NewsQueryResult]:
         """Get recent news, optionally filtered."""
+        emit_searching(
+            f"获取最近 {hours_ago} 小时的新闻...",
+            f"类别: {category or '全部'}, 独家: {exclusive_only}"
+        )
         search_results = self.repository.get_recent_news(
             hours=hours_ago,
             limit=limit * 2,

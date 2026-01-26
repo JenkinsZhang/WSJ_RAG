@@ -7,13 +7,16 @@ using the news_query tool backed by OpenSearch vector search.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, AsyncGenerator
 
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.llms.bedrock_converse import BedrockConverse
+from workflows.handler import WorkflowHandler
 
+from src.agent.progress import ProgressTracker, set_progress_tracker
 from src.agent.tools import create_news_query_function_tool
 from src.config import get_settings
 
@@ -88,9 +91,9 @@ class NewsAgent:
     """
 
     def __init__(
-            self,
-            model_id: Optional[str] = None,
-            verbose: bool = False,
+        self,
+        model_id: Optional[str] = None,
+        verbose: bool = False,
     ) -> None:
         """
         Initialize the news agent.
@@ -156,7 +159,7 @@ class NewsAgent:
             response = await self.agent.run(user_msg=message)
 
             # Extract the response text
-            if hasattr(response, 'response'):
+            if hasattr(response, "response"):
                 return str(response.response)
             return str(response)
 
@@ -185,12 +188,142 @@ class NewsAgent:
         if loop is not None:
             # We're in an async context, create a new loop in a thread
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, self.chat(message))
                 return future.result()
         else:
             # No running loop, safe to use asyncio.run
             return asyncio.run(self.chat(message))
+
+    async def chat_stream(self, message: str) -> AsyncGenerator[dict, None]:
+        """
+        Stream chat with step-by-step events including tool progress.
+
+        Yields events in the format:
+            {"type": "step", "step": "thinking", "content": "..."}
+            {"type": "step", "step": "tool_call", "tool": "news_query", "args": {...}}
+            {"type": "tool_progress", "step": "analyzing", "content": "...", "detail": "..."}
+            {"type": "step", "step": "tool_result", "tool": "news_query", "result": "..."}
+            {"type": "delta", "content": "..."}  # Streaming text chunks
+            {"type": "done", "content": "..."}   # Final complete response
+
+        Args:
+            message: User's question or request
+
+        Yields:
+            Event dictionaries with type and content
+        """
+        logger.debug(f"User message (stream): {message}")
+
+        # Set up progress tracker with async queue
+        progress_queue: asyncio.Queue = asyncio.Queue()
+        tracker = ProgressTracker()
+        tracker.set_queue(progress_queue)
+        set_progress_tracker(tracker)
+
+        try:
+            # Emit thinking step
+            yield {"type": "step", "step": "thinking", "content": "正在分析您的问题..."}
+
+            # Run agent with streaming
+            handler: WorkflowHandler = self.agent.run(user_msg=message)
+
+            final_response = ""
+            current_tool_call = None
+
+            async for event in handler.stream_events():
+                # First, check for any tool progress events
+                while not progress_queue.empty():
+                    try:
+                        progress_event = progress_queue.get_nowait()
+                        yield progress_event
+                    except asyncio.QueueEmpty:
+                        break
+
+                event_type = type(event).__name__
+
+                # Handle different event types
+                if event_type == "AgentInput":
+                    # Initial input received
+                    yield {
+                        "type": "step",
+                        "step": "processing",
+                        "content": "开始处理请求...",
+                    }
+
+                elif event_type == "AgentSetup":
+                    # Agent setup complete
+                    pass
+
+                elif event_type == "AgentStream":
+                    # Streaming token
+                    if hasattr(event, "delta") and event.delta:
+                        final_response += event.delta
+                        yield {"type": "delta", "content": event.delta}
+
+                elif event_type == "ToolCall":
+                    # Tool is being called
+                    tool_name = getattr(event, "tool_name", "unknown")
+                    tool_args = getattr(event, "tool_kwargs", {})
+                    current_tool_call = tool_name
+                    yield {
+                        "type": "step",
+                        "step": "tool_call",
+                        "tool": tool_name,
+                        "content": f"调用工具: {tool_name}",
+                        "args": tool_args,
+                    }
+
+                elif event_type == "ToolCallResult":
+                    # Drain any remaining progress events before showing result
+                    while not progress_queue.empty():
+                        try:
+                            progress_event = progress_queue.get_nowait()
+                            yield progress_event
+                        except asyncio.QueueEmpty:
+                            break
+
+                    # Tool returned result
+                    tool_name = getattr(
+                        event, "tool_name", current_tool_call or "unknown"
+                    )
+                    result_preview = str(getattr(event, "tool_output", ""))[:500]
+                    yield {
+                        "type": "step",
+                        "step": "tool_result",
+                        "tool": tool_name,
+                        "content": f"工具 {tool_name} 返回结果",
+                        "result_preview": result_preview
+                        + (
+                            "..."
+                            if len(str(getattr(event, "tool_output", ""))) > 500
+                            else ""
+                        ),
+                    }
+
+                elif event_type == "AgentOutput":
+                    # Final output
+                    if hasattr(event, "response"):
+                        final_response = str(event.response)
+
+                else:
+                    # Log unknown events for debugging
+                    logger.debug(f"Unknown event type: {event_type}, event: {event}")
+
+            # Get final result if streaming didn't capture it
+            result = await handler
+            if hasattr(result, "response") and not final_response:
+                final_response = str(result.response)
+
+            yield {"type": "done", "content": final_response}
+
+        except Exception as e:
+            logger.error(f"Agent stream failed: {e}")
+            yield {"type": "error", "content": str(e)}
+        finally:
+            # Clean up progress tracker
+            set_progress_tracker(None)
 
 
 # Singleton instance
