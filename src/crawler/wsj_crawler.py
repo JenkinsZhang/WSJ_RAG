@@ -255,7 +255,8 @@ class WSJCrawler:
     def __init__(self):
         self._browser = BrowserManager()
         self._page: Optional[Page] = None
-        self._crawled_urls: set[str] = set()
+        self._crawled_urls: set[str] = set()  # 已成功爬取 (持久化)
+        self._skipped_urls: set[str] = set()  # 本次运行中失败的 (不持久化，下次可重试)
         self._load_crawled_urls()
 
     # ---------- 浏览器生命周期 ----------
@@ -587,9 +588,8 @@ class WSJCrawler:
 
         links = self._extract_article_links(category)
 
-        new_links = [
-            l for l in links if normalize_url(l.url) not in self._crawled_urls
-        ]
+        known = self._crawled_urls | self._skipped_urls
+        new_links = [l for l in links if normalize_url(l.url) not in known]
         logger.info(f"新文章: {len(new_links)}/{len(links)}")
 
         max_articles = (
@@ -599,6 +599,13 @@ class WSJCrawler:
 
         articles = []
         for i, link in enumerate(links_to_crawl, 1):
+            normalized = normalize_url(link.url)
+
+            # 动态跳过：前面分类刚爬过的
+            if normalized in self._crawled_urls:
+                logger.info(f"  [{i}/{len(links_to_crawl)}] 跳过 (已爬): {link.title[:40]}")
+                continue
+
             exclusive_tag = "[EXCLUSIVE] " if link.is_exclusive else ""
             logger.info(
                 f"\n[{i}/{len(links_to_crawl)}] {exclusive_tag}{link.title[:40]}..."
@@ -608,17 +615,19 @@ class WSJCrawler:
 
             if article and article.content:
                 articles.append(article)
-
                 filepath = self._save_article(article)
                 logger.info(f"    保存: {filepath.name}")
-
-                self._crawled_urls.add(normalize_url(link.url))
-                self._save_crawled_urls()
+                self._crawled_urls.add(normalized)
+            else:
+                # 失败的记入跳过集合，本次运行不再重试
+                self._skipped_urls.add(normalized)
 
             if i < len(links_to_crawl):
                 wait = random.uniform(2.0, 4.0)
                 self._page.wait_for_timeout(int(wait * 1000))
 
+        # 整个分类完成后写一次盘
+        self._save_crawled_urls()
         logger.info(f"\n{category} 完成: {len(articles)}/{len(links_to_crawl)} 篇成功")
         return articles
 
@@ -634,7 +643,6 @@ class WSJCrawler:
             for i, (category, url) in enumerate(categories):
                 articles = self.crawl_page(category, url)
                 results[category] = articles
-                self._save_crawled_urls()
 
                 if i < len(categories) - 1:
                     wait = random.uniform(3.0, 5.0)
@@ -745,6 +753,12 @@ class WSJCrawler:
         # 逐一爬取
         articles = []
         for i, link in enumerate(links, 1):
+            normalized = normalize_url(link.url)
+
+            # 动态跳过：前面日期刚爬过的
+            if normalized in self._crawled_urls:
+                continue
+
             logger.info(f"\n  [{i}/{len(links)}] {link.title[:50]}...")
 
             article = self._scrape_article(link, "archive")
@@ -752,14 +766,16 @@ class WSJCrawler:
                 articles.append(article)
                 filepath = self._save_article_for_date(article, target_date)
                 logger.info(f"    保存: {filepath.name}")
-
-                self._crawled_urls.add(normalize_url(link.url))
-                self._save_crawled_urls()
+                self._crawled_urls.add(normalized)
+            else:
+                self._skipped_urls.add(normalized)
 
             if i < len(links):
                 wait = random.uniform(2.0, 4.0)
                 self._page.wait_for_timeout(int(wait * 1000))
 
+        # 每天完成后写一次盘
+        self._save_crawled_urls()
         logger.info(f"\n  {target_date} 完成: {len(articles)}/{len(links)} 篇")
         return articles
 
