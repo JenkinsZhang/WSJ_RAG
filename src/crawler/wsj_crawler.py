@@ -343,13 +343,10 @@ class WSJCrawler:
 
     # ---------- 页面操作 ----------
 
-    def _scroll_to_bottom(self, for_list_page: bool = True, max_scrolls: int = 15):
-        """滚动到页面底部，加载懒加载内容"""
-        if for_list_page:
-            last_value = len(self._page.locator("h3").all())
-            logger.info(f"  开始滚动，当前 h3: {last_value}")
-        else:
-            last_value = self._page.evaluate("document.body.scrollHeight")
+    def _scroll_to_load_more(self, max_scrolls: int = 12):
+        """滚动列表页加载更多文章"""
+        last_count = len(self._page.locator("h3").all())
+        logger.info(f"  开始滚动，当前 h3: {last_count}")
 
         stable_count = 0
         scroll_count = 0
@@ -359,21 +356,16 @@ class WSJCrawler:
                 "window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'})"
             )
             scroll_count += 1
-            self._page.wait_for_timeout(3000)
+            self._page.wait_for_timeout(2000)
 
-            if for_list_page:
-                current_value = len(self._page.locator("h3").all())
-            else:
-                current_value = self._page.evaluate("document.body.scrollHeight")
-
-            if current_value > last_value:
+            current_count = len(self._page.locator("h3").all())
+            if current_count > last_count:
                 stable_count = 0
-                last_value = current_value
+                last_count = current_count
             else:
                 stable_count += 1
 
-        if for_list_page:
-            logger.info(f"  滚动完成: {scroll_count}次, h3: {last_value}")
+        logger.info(f"  滚动完成: {scroll_count}次, h3: {last_count}")
 
     # ---------- URL 过滤 ----------
 
@@ -422,7 +414,7 @@ class WSJCrawler:
             logger.warning("等待 h3 超时")
             return []
 
-        self._scroll_to_bottom(for_list_page=True)
+        self._scroll_to_load_more()
 
         for h in self._page.locator("h3 a").all():
             try:
@@ -484,21 +476,17 @@ class WSJCrawler:
         try:
             self._page.goto(link.url, wait_until="domcontentloaded", timeout=20000)
 
-            try:
-                self._page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-
-            # CAPTCHA 检测
+            # CAPTCHA 检测（domcontentloaded 后立即检查，不等 networkidle）
             if not self._wait_for_captcha(context=link.title[:30]):
                 return None
 
+            # 等正文元素出现即可，不需要等整个页面加载完
             try:
-                self._page.wait_for_selector("article", timeout=10000)
+                self._page.wait_for_selector(
+                    'article, [data-type="paragraph"]', timeout=8000
+                )
             except Exception:
-                logger.warning("    未找到 article 元素")
-
-            self._scroll_to_bottom(for_list_page=False)
+                logger.warning("    未找到正文元素")
 
             data = self._page.evaluate(_EXTRACT_ARTICLE_JS)
 
@@ -566,24 +554,19 @@ class WSJCrawler:
         logger.info(f"{'='*60}")
 
         logger.info("  等待页面加载...")
-        self._page.goto(url, wait_until="load", timeout=90000)
-
-        try:
-            self._page.wait_for_load_state("networkidle", timeout=30000)
-        except Exception:
-            logger.warning("  networkidle 超时，继续...")
+        self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
         # CAPTCHA 检测
         if not self._wait_for_captcha(context=category):
             logger.error(f"  {category} 页面 CAPTCHA 超时，跳过该分类")
             return []
 
+        # 等 h3 出现即可，不需要 networkidle
         try:
             self._page.wait_for_selector("h3", timeout=15000)
         except Exception:
             logger.warning("  等待 h3 超时")
 
-        self._page.wait_for_timeout(3000)
         logger.info("  页面加载完成")
 
         links = self._extract_article_links(category)
@@ -623,7 +606,7 @@ class WSJCrawler:
                 self._skipped_urls.add(normalized)
 
             if i < len(links_to_crawl):
-                wait = random.uniform(2.0, 4.0)
+                wait = random.uniform(1.0, 2.5)
                 self._page.wait_for_timeout(int(wait * 1000))
 
         # 整个分类完成后写一次盘
@@ -645,7 +628,7 @@ class WSJCrawler:
                 results[category] = articles
 
                 if i < len(categories) - 1:
-                    wait = random.uniform(3.0, 5.0)
+                    wait = random.uniform(2.0, 4.0)
                     logger.info(f"\n等待 {wait:.1f} 秒后继续...")
                     self._page.wait_for_timeout(int(wait * 1000))
 
@@ -705,25 +688,18 @@ class WSJCrawler:
         logger.info(f"URL: {url}")
         logger.info(f"{'='*60}")
 
-        self._page.goto(url, wait_until="load", timeout=90000)
-
-        try:
-            self._page.wait_for_load_state("networkidle", timeout=30000)
-        except Exception:
-            logger.warning("  networkidle 超时，继续...")
+        self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
         if not self._wait_for_captcha(context=f"archive {target_date}"):
             logger.error(f"  Archive {target_date} CAPTCHA 超时，跳过")
             return []
 
-        # Archive 页面无需滚动，直接提取 h3 a
+        # Archive 页面是静态列表，等 h3 出现即可
         try:
-            self._page.wait_for_selector("h3", timeout=15000)
+            self._page.wait_for_selector("h3", timeout=10000)
         except Exception:
             logger.warning(f"  {target_date} 无文章")
             return []
-
-        self._page.wait_for_timeout(2000)
 
         # 提取链接
         links = []
