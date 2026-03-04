@@ -75,6 +75,41 @@ SUMMARY_PROMPT = """请根据以下新闻文章内容，用中文给出一个简
 
 请用3-5句话总结以上新闻的核心内容："""
 
+EVALUATION_PROMPT = """Evaluate how relevant the search results are to the user's original query.
+
+User query: {query}
+Search mode used: {mode}
+Result titles:
+{titles}
+
+Output ONLY valid JSON:
+{{"score": <1-5>, "reason": "<brief reason in Chinese>", "suggested_mode": "<hybrid|semantic|recent or null>"}}
+
+Score guide: 5=Highly relevant, 3=Somewhat relevant, 1=Irrelevant or no results"""
+
+
+@dataclass
+class SearchEvaluation:
+    """Result of self-evaluation on search quality."""
+    score: int
+    reason: str
+    suggested_mode: Optional[str] = None
+
+    @classmethod
+    def from_json(cls, text: str) -> "SearchEvaluation":
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+        try:
+            data = json.loads(text)
+            return cls(
+                score=max(1, min(5, int(data.get("score", 3)))),
+                reason=data.get("reason", ""),
+                suggested_mode=data.get("suggested_mode"),
+            )
+        except (json.JSONDecodeError, ValueError):
+            return cls(score=3, reason="评估解析失败")
+
 
 @dataclass
 class QueryIntent:
@@ -330,6 +365,7 @@ class NewsQueryTool:
         - Detects if user wants a summary of results
         - Chooses the best search mode based on query content
         - Adds temporal context when relevant
+        - Evaluates result quality and retries with a different mode if needed
 
         Args:
             query: The search query or question about news (any language).
@@ -362,34 +398,31 @@ class NewsQueryTool:
 
         try:
             # Execute search based on detected mode
-            mode_names = {"recent": "时间排序", "semantic": "语义搜索", "hybrid": "混合搜索"}
-            emit_searching(
-                f"执行{mode_names.get(intent.mode, intent.mode)}...",
-                f"搜索词: {intent.search_query[:50]}"
-            )
+            results = self._execute_search(intent, max_results)
+            evaluation = self._evaluate_results(query, intent, results)
 
-            if intent.mode == "recent":
-                results = self._search_recent(
-                    query=intent.search_query,
-                    category=intent.category,
-                    hours_ago=intent.hours_ago or 72,
-                    limit=max_results,
-                    exclusive_only=intent.exclusive_only,
+            # Retry with a different mode if quality is low
+            if evaluation.score < 3 and intent.mode != "recent":
+                retry_mode = "semantic" if intent.mode == "hybrid" else "hybrid"
+                logger.info(
+                    f"Low quality score ({evaluation.score}/5), "
+                    f"retrying with {retry_mode} mode"
                 )
-            elif intent.mode == "semantic":
-                results = self._search_semantic(
-                    query=intent.search_query,
-                    category=intent.category,
-                    k=max_results,
+                retry_intent = QueryIntent(
+                    search_query=intent.search_query,
+                    mode=retry_mode,
                     exclusive_only=intent.exclusive_only,
-                )
-            else:  # hybrid (default)
-                results = self._search_hybrid(
-                    query=intent.search_query,
+                    needs_summary=intent.needs_summary,
                     category=intent.category,
-                    k=max_results,
-                    exclusive_only=intent.exclusive_only,
+                    hours_ago=intent.hours_ago,
                 )
+                retry_results = self._execute_search(retry_intent, max_results)
+                retry_evaluation = self._evaluate_results(query, retry_intent, retry_results)
+
+                if retry_evaluation.score > evaluation.score:
+                    results = retry_results
+                    evaluation = retry_evaluation
+                    intent = retry_intent
 
             emit_searching(
                 f"搜索完成，找到 {len(results)} 篇文章",
@@ -411,7 +444,7 @@ class NewsQueryTool:
                 output_parts.append("")
                 output_parts.append("=== 详细文章 ===")
 
-            output_parts.append(f"Found {len(results)} relevant articles:\n")
+            output_parts.append(f"Found {len(results)} relevant articles (quality: {evaluation.score}/5):\n")
             for i, result in enumerate(results, 1):
                 output_parts.append(f"--- Article {i} ---")
                 output_parts.append(result.to_text())
@@ -501,6 +534,51 @@ class NewsQueryTool:
             hours=hours_ago, limit=limit * 2, category=category, exclusive_only=exclusive_only
         )
         return self._to_query_results(results[:limit])
+
+    def _execute_search(self, intent: QueryIntent, max_results: int) -> list[NewsQueryResult]:
+        """Execute search based on intent mode."""
+        mode_names = {"recent": "时间排序", "semantic": "语义搜索", "hybrid": "混合搜索"}
+        emit_searching(
+            f"执行{mode_names.get(intent.mode, intent.mode)}...",
+            f"搜索词: {intent.search_query[:50]}"
+        )
+        if intent.mode == "recent":
+            return self._search_recent(
+                query=intent.search_query, category=intent.category,
+                hours_ago=intent.hours_ago or 72, limit=max_results,
+                exclusive_only=intent.exclusive_only,
+            )
+        elif intent.mode == "semantic":
+            return self._search_semantic(
+                query=intent.search_query, category=intent.category,
+                k=max_results, exclusive_only=intent.exclusive_only,
+            )
+        else:
+            return self._search_hybrid(
+                query=intent.search_query, category=intent.category,
+                k=max_results, exclusive_only=intent.exclusive_only,
+            )
+
+    def _evaluate_results(self, query: str, intent: QueryIntent, results: list[NewsQueryResult]) -> SearchEvaluation:
+        """Evaluate search result quality using LLM."""
+        if not results:
+            return SearchEvaluation(score=1, reason="无搜索结果")
+
+        from src.agent.progress import emit_evaluating
+        emit_evaluating("评估搜索结果质量...", f"共 {len(results)} 篇文章")
+
+        titles = "\n".join(f"- {r.title}" for r in results[:10])
+        prompt = EVALUATION_PROMPT.format(query=query, mode=intent.mode, titles=titles)
+
+        try:
+            llm = get_llm_service()
+            response = llm.generate(prompt, max_tokens=100, temperature=0.1)
+            evaluation = SearchEvaluation.from_json(response)
+            emit_evaluating(f"搜索质量: {evaluation.score}/5", evaluation.reason)
+            return evaluation
+        except Exception as e:
+            logger.warning(f"Self-evaluation failed: {e}")
+            return SearchEvaluation(score=3, reason="评估失败")
 
 
 # Singleton instance
