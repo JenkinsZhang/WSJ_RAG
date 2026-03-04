@@ -17,7 +17,11 @@ from llama_index.llms.bedrock_converse import BedrockConverse
 from workflows.handler import WorkflowHandler
 
 from src.agent.progress import ProgressTracker, set_progress_tracker
+from src.agent.session import ChatSession
 from src.agent.tools import create_news_query_function_tool
+from src.agent.tools_trend import create_trend_analysis_tool
+from src.agent.tools_compare import create_compare_articles_tool
+from src.agent.tools_research import create_deep_research_tool
 from src.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -38,20 +42,43 @@ NEWS_AGENT_SYSTEM_PROMPT_TEMPLATE = """你是一个专业的新闻分析助手�
 2. 总结和解释新闻内容
 3. 回答关于时事和商业新闻的问题
 4. 在适当时候提供背景分析，说明新闻的时效性
+5. 分析新闻趋势和话题热度变化
+6. 对比不同文章的观点和立场
+7. 对复杂话题进行深度研究，综合多篇文章
 
 ## 重要规则
 - **所有回答必须使用中文**，即使用户用英文提问
 - 引用文章时，提供文章标题和URL
 - **说明新闻发布时间与今天的关系**（如"这是今天发布的新闻"或"这篇文章发布于3天前"）
 - 如果没有找到相关文章，告知用户并建议其他搜索词或分类
+- 如果用户对之前的回答不满意，尝试不同的搜索策略或工具
 
-## 使用news_query工具
+## 可用工具
+
+### 1. news_query — 新闻查询
+基础查询工具，搜索新闻文章。支持语义搜索、时间过滤、分类过滤、独家新闻过滤和自动总结。
 工具会自动分析用户意图，你只需要传入用户的原始问题即可。
 工具会自动处理：
 - 翻译（中文→英文搜索）
 - 时间范围（"最近"→ recent mode）
 - 独家新闻（"独家"→ exclusive filter）
 - 自动总结（"总结"→ 生成摘要）
+
+### 2. trend_analysis — 趋势分析
+分析某个话题在一段时间内的新闻报道趋势，包括报道频率、情感倾向和关键事件时间线。
+
+### 3. compare_articles — 文章对比
+对比多篇文章的观点、立场和重点差异，适用于有争议的话题或多角度分析。
+
+### 4. deep_research — 深度研究
+对复杂话题进行深度研究，综合多轮搜索和多篇文章，生成详细的研究报告。
+
+## 工具选择策略
+- **简单查询**（"最近有什么科技新闻"）→ 使用 `news_query`
+- **趋势类问题**（"AI监管最近的趋势如何"）→ 使用 `trend_analysis`
+- **对比类问题**（"各方对关税政策的看法"）→ 使用 `compare_articles`
+- **深度分析**（"详细分析中美贸易战的影响"）→ 使用 `deep_research`
+- **不确定时** → 先用 `news_query`，根据结果再决定是否使用其他工具
 
 ## 可用的新闻分类
 home, world, china, tech, finance, business, politics, economy
@@ -61,6 +88,20 @@ home, world, china, tech, finance, business, politics, economy
 - 引用来源时格式: 「文章标题」(URL) - 发布于 [时间]
 - 如有多篇相关文章，综合分析后给出答案
 - 明确告知用户新闻的新鲜程度
+"""
+
+CONVERSATION_HISTORY_TEMPLATE = """
+## 对话历史
+以下是本次会话的历史对话，请参考上下文回答用户的最新问题：
+
+{history}
+"""
+
+FEEDBACK_CONTEXT_TEMPLATE = """
+## 用户反馈
+用户对近期回答的反馈：
+{feedback}
+请根据反馈调整你的回答策略。
 """
 
 # Weekday names in Chinese
@@ -105,7 +146,7 @@ class NewsAgent:
         settings = get_settings()
         self.model_id = model_id or settings.llm.model_id
         self.verbose = verbose
-        self._agent: Optional[FunctionAgent] = None
+        self._tools = None
 
     def _create_llm(self) -> BedrockConverse:
         """Create the Bedrock LLM instance with increased token limit."""
@@ -118,16 +159,53 @@ class NewsAgent:
             temperature=0.7,
         )
 
-    def _create_agent(self) -> FunctionAgent:
-        """Create the LlamaIndex function agent with current datetime context."""
+    def _get_tools(self) -> list:
+        """Lazily create and cache all agent tools."""
+        if self._tools is None:
+            logger.info("Creating agent tools...")
+            self._tools = [
+                create_news_query_function_tool(),
+                create_trend_analysis_tool(),
+                create_compare_articles_tool(),
+                create_deep_research_tool(),
+            ]
+            logger.info(f"Created {len(self._tools)} tools")
+        return self._tools
+
+    def _create_agent(self, session: Optional[ChatSession] = None) -> FunctionAgent:
+        """Create the LlamaIndex function agent with current datetime context.
+
+        Args:
+            session: Optional chat session for multi-turn conversation context.
+        """
         llm = self._create_llm()
-        news_tool = create_news_query_function_tool()
+        tools = self._get_tools()
 
         # Generate system prompt with current date/time
         system_prompt = _generate_system_prompt()
 
+        # Append conversation history if session has messages
+        if session and session.messages:
+            history_entries = session.get_history_for_prompt(max_turns=10)
+            if history_entries:
+                history_lines = []
+                for entry in history_entries:
+                    role_label = "用户" if entry["role"] == "user" else "助手"
+                    content = entry["content"]
+                    if len(content) > 200:
+                        content = content[:200] + "..."
+                    history_lines.append(f"{role_label}: {content}")
+                history_text = "\n".join(history_lines)
+                system_prompt += CONVERSATION_HISTORY_TEMPLATE.format(history=history_text)
+
+        # Append feedback context if session has recent feedback
+        if session:
+            feedback_summary = session.get_recent_feedback_summary()
+            if feedback_summary:
+                system_prompt += FEEDBACK_CONTEXT_TEMPLATE.format(feedback=feedback_summary)
+
         agent = FunctionAgent(
-            tools=[news_tool],
+            tools=tools,
             llm=llm,
             system_prompt=system_prompt,
             verbose=self.verbose,
@@ -135,20 +213,13 @@ class NewsAgent:
 
         return agent
 
-    @property
-    def agent(self) -> FunctionAgent:
-        """Lazy initialization of the agent."""
-        if self._agent is None:
-            logger.info(f"Initializing NewsAgent with model: {self.model_id}")
-            self._agent = self._create_agent()
-        return self._agent
-
-    async def chat(self, message: str) -> str:
+    async def chat(self, message: str, session: Optional[ChatSession] = None) -> str:
         """
         Send a message to the agent and get a response.
 
         Args:
             message: User's question or request
+            session: Optional chat session for multi-turn conversation
 
         Returns:
             Agent's response as a string
@@ -156,47 +227,42 @@ class NewsAgent:
         logger.debug(f"User message: {message}")
 
         try:
-            response = await self.agent.run(user_msg=message)
+            agent = self._create_agent(session)
+            response = await agent.run(user_msg=message)
 
             # Extract the response text
             if hasattr(response, "response"):
-                return str(response.response)
-            return str(response)
+                response_text = str(response.response)
+            else:
+                response_text = str(response)
+
+            # Record messages in session
+            if session:
+                session.add_message("user", message)
+                session.add_message("assistant", response_text)
+
+            return response_text
 
         except Exception as e:
             logger.error(f"Agent chat failed: {e}")
             raise
 
-    def chat_sync(self, message: str) -> str:
+    def chat_sync(self, message: str, session: Optional[ChatSession] = None) -> str:
         """
         Synchronous version of chat.
 
         Args:
             message: User's question or request
+            session: Optional chat session for multi-turn conversation
 
         Returns:
             Agent's response as a string
         """
-        import asyncio
+        return asyncio.run(self.chat(message, session))
 
-        # Get or create event loop
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None:
-            # We're in an async context, create a new loop in a thread
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, self.chat(message))
-                return future.result()
-        else:
-            # No running loop, safe to use asyncio.run
-            return asyncio.run(self.chat(message))
-
-    async def chat_stream(self, message: str) -> AsyncGenerator[dict, None]:
+    async def chat_stream(
+        self, message: str, session: Optional[ChatSession] = None
+    ) -> AsyncGenerator[dict, None]:
         """
         Stream chat with step-by-step events including tool progress.
 
@@ -210,6 +276,7 @@ class NewsAgent:
 
         Args:
             message: User's question or request
+            session: Optional chat session for multi-turn conversation
 
         Yields:
             Event dictionaries with type and content
@@ -226,8 +293,9 @@ class NewsAgent:
             # Emit thinking step
             yield {"type": "step", "step": "thinking", "content": "正在分析您的问题..."}
 
-            # Run agent with streaming
-            handler: WorkflowHandler = self.agent.run(user_msg=message)
+            # Create agent with session context and run with streaming
+            agent = self._create_agent(session)
+            handler: WorkflowHandler = agent.run(user_msg=message)
 
             final_response = ""
             current_tool_call = None
@@ -316,7 +384,13 @@ class NewsAgent:
             if hasattr(result, "response") and not final_response:
                 final_response = str(result.response)
 
-            yield {"type": "done", "content": final_response}
+            # Record messages in session and yield done event
+            if session:
+                session.add_message("user", message)
+                msg = session.add_message("assistant", final_response)
+                yield {"type": "done", "content": final_response, "message_id": msg.message_id}
+            else:
+                yield {"type": "done", "content": final_response}
 
         except Exception as e:
             logger.error(f"Agent stream failed: {e}")
