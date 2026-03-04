@@ -82,10 +82,9 @@ Search mode used: {mode}
 Result titles:
 {titles}
 
-Output ONLY valid JSON:
-{{"score": <1-5>, "reason": "<brief reason in Chinese>", "suggested_mode": "<hybrid|semantic|recent or null>"}}
-
-Score guide: 5=Highly relevant, 3=Somewhat relevant, 1=Irrelevant or no results"""
+Rate relevance 1-5 (5=highly relevant, 3=somewhat, 1=irrelevant).
+Respond with ONLY a JSON object like this example:
+{{"score": 4, "reason": "结果与查询高度相关", "suggested_mode": null}}"""
 
 
 @dataclass
@@ -100,6 +99,11 @@ class SearchEvaluation:
         text = text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+        # Try to extract JSON object from response
+        import re
+        json_match = re.search(r'\{[^}]+\}', text)
+        if json_match:
+            text = json_match.group()
         try:
             data = json.loads(text)
             return cls(
@@ -108,6 +112,7 @@ class SearchEvaluation:
                 suggested_mode=data.get("suggested_mode"),
             )
         except (json.JSONDecodeError, ValueError):
+            logger.warning(f"Failed to parse evaluation JSON: {text[:200]}")
             return cls(score=3, reason="评估解析失败")
 
 

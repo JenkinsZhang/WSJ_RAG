@@ -205,13 +205,44 @@
         }
         .message-content pre code { background: none; padding: 0; color: inherit; }
 
-        /* Thinking Steps - Compact */
+        /* Thinking Steps - Collapsible */
         .thinking-steps {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
             font-size: 13px;
             color: #64748b;
+        }
+
+        .thinking-steps-toggle {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            cursor: pointer;
+            color: #94a3b8;
+            font-size: 12px;
+            border-radius: 4px;
+            transition: color 0.2s;
+        }
+
+        .thinking-steps-toggle:hover {
+            color: #64748b;
+        }
+
+        .thinking-steps.has-hidden .thinking-steps-toggle {
+            display: flex;
+        }
+
+        .thinking-steps-history {
+            display: none;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .thinking-steps.expanded .thinking-steps-history {
+            display: flex;
+        }
+
+        .thinking-steps.expanded .thinking-steps-toggle .toggle-arrow {
+            transform: rotate(90deg);
         }
 
         .thinking-step {
@@ -221,6 +252,9 @@
             padding: 4px 8px;
             background: transparent;
             border-radius: 4px;
+        }
+
+        .thinking-step.latest {
             animation: slideIn 0.15s ease;
         }
 
@@ -237,6 +271,12 @@
             color: #059669;
         }
 
+        .thinking-step.in-history {
+            opacity: 0.6;
+            font-size: 12px;
+            padding: 2px 8px;
+        }
+
         .thinking-step-icon {
             width: 18px;
             height: 18px;
@@ -245,6 +285,12 @@
             justify-content: center;
             flex-shrink: 0;
             font-size: 14px;
+        }
+
+        .thinking-step.in-history .thinking-step-icon {
+            width: 14px;
+            height: 14px;
+            font-size: 11px;
         }
 
         .thinking-step-content {
@@ -265,6 +311,10 @@
             overflow: hidden;
             text-overflow: ellipsis;
             margin-top: 1px;
+        }
+
+        .thinking-step.in-history .thinking-step-detail {
+            display: none;
         }
 
         /* Tool progress - indented */
@@ -551,12 +601,51 @@
         function createThinkingStepsContainer() {
             const container = document.createElement('div');
             container.className = 'thinking-steps';
+
+            // Toggle for collapsed history
+            const toggle = document.createElement('div');
+            toggle.className = 'thinking-steps-toggle';
+            toggle.innerHTML = '<span class="toggle-arrow" style="transition:transform 0.2s;font-size:10px;">&#9654;</span><span class="toggle-text">展开处理步骤</span>';
+            toggle.onclick = () => {
+                container.classList.toggle('expanded');
+                const text = toggle.querySelector('.toggle-text');
+                text.textContent = container.classList.contains('expanded') ? '收起处理步骤' : '展开处理步骤';
+            };
+            container.appendChild(toggle);
+
+            // Hidden history area
+            const history = document.createElement('div');
+            history.className = 'thinking-steps-history';
+            container.appendChild(history);
+
+            // Latest step slot
+            const latest = document.createElement('div');
+            latest.className = 'thinking-steps-latest';
+            container.appendChild(latest);
+
             return container;
         }
 
         function addThinkingStep(container, step) {
+            const latestSlot = container.querySelector('.thinking-steps-latest');
+            const historySlot = container.querySelector('.thinking-steps-history');
+            const toggle = container.querySelector('.thinking-steps-toggle');
+
+            // Move current latest to history
+            const currentLatest = latestSlot.querySelector('.thinking-step');
+            if (currentLatest) {
+                currentLatest.classList.remove('latest', 'active');
+                currentLatest.classList.add('completed', 'in-history');
+                const spinner = currentLatest.querySelector('.spinner');
+                if (spinner) spinner.outerHTML = '&#10003;';
+                historySlot.appendChild(currentLatest);
+                container.classList.add('has-hidden');
+                const count = historySlot.children.length;
+                toggle.querySelector('.toggle-text').textContent = `展开处理步骤 (${count})`;
+            }
+
             const stepEl = document.createElement('div');
-            stepEl.className = 'thinking-step active';
+            stepEl.className = 'thinking-step active latest';
 
             if (step.type === 'tool_progress') {
                 stepEl.classList.add('tool-progress');
@@ -586,7 +675,8 @@
                 </span>
             `;
 
-            container.appendChild(stepEl);
+            latestSlot.innerHTML = '';
+            latestSlot.appendChild(stepEl);
             scrollToBottom();
             return stepEl;
         }
@@ -598,6 +688,22 @@
                 const spinner = el.querySelector('.spinner');
                 if (spinner) spinner.outerHTML = '&#10003;';
             });
+            // Move last step to history too
+            const latestSlot = container.querySelector('.thinking-steps-latest');
+            const historySlot = container.querySelector('.thinking-steps-history');
+            if (latestSlot && historySlot) {
+                const last = latestSlot.querySelector('.thinking-step');
+                if (last) {
+                    last.classList.remove('latest');
+                    last.classList.add('in-history');
+                    historySlot.appendChild(last);
+                }
+                latestSlot.innerHTML = '';
+                container.classList.add('has-hidden');
+                const count = historySlot.children.length;
+                const toggle = container.querySelector('.toggle-text');
+                if (toggle) toggle.textContent = `查看处理步骤 (${count})`;
+            }
         }
 
         function escapeHtml(text) {
