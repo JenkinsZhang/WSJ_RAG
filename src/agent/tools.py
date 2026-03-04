@@ -252,7 +252,7 @@ class QueryAnalyzer:
 
         try:
             emit_summarizing("调用 LLM 生成总结...", None)
-            summary = self.llm_service.generate(prompt, max_tokens=500, temperature=0.3)
+            summary = self.llm_service.generate(prompt, max_tokens=1000, temperature=0.3)
             emit_summarizing("总结生成完成", summary[:100] + "..." if len(summary) > 100 else summary)
             return summary
         except Exception as e:
