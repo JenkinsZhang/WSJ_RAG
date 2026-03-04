@@ -425,6 +425,28 @@ class NewsQueryTool:
             emit_processing("查询处理失败", str(e))
             return f"Error searching news: {str(e)}"
 
+    @staticmethod
+    def _deduplicate(results: list, limit: int) -> list:
+        """Deduplicate search results by article_id, keeping highest score."""
+        seen = {}
+        for r in results:
+            if r.article_id not in seen or r.score > seen[r.article_id].score:
+                seen[r.article_id] = r
+        return list(seen.values())[:limit]
+
+    @staticmethod
+    def _to_query_results(results: list) -> list[NewsQueryResult]:
+        """Convert SearchResult objects to NewsQueryResult objects."""
+        return [
+            NewsQueryResult(
+                title=r.title, url=r.url, content=r.content,
+                summary=r.article_summary or r.chunk_summary,
+                category=r.category, published_at=r.published_at,
+                score=r.score, is_exclusive=r.is_exclusive,
+            )
+            for r in results
+        ]
+
     def _search_semantic(
         self,
         query: str,
@@ -435,44 +457,14 @@ class NewsQueryTool:
         """Perform semantic (vector) search."""
         if not query.strip():
             return []
-
-        # Generate query embedding
         emit_embedding("生成查询向量...", f"文本长度: {len(query)} 字符")
         query_vector = self.embedding_service.embed_text(query)
         emit_embedding("向量生成完成", f"维度: {len(query_vector)}")
-
-        # Search with filters
         emit_searching("执行向量搜索...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
-        search_results = self.repository.search_by_vector(
-            query_vector,
-            k=k * 2,
-            category=category,
-            exclusive_only=exclusive_only,
+        results = self.repository.search_by_vector(
+            query_vector, k=k * 2, category=category, exclusive_only=exclusive_only
         )
-
-        # Deduplicate by article_id, keep highest score
-        seen_articles = {}
-        for result in search_results:
-            if result.article_id not in seen_articles:
-                seen_articles[result.article_id] = result
-            elif result.score > seen_articles[result.article_id].score:
-                seen_articles[result.article_id] = result
-
-        unique_results = list(seen_articles.values())[:k]
-
-        return [
-            NewsQueryResult(
-                title=r.title,
-                url=r.url,
-                content=r.content,
-                summary=r.article_summary or r.chunk_summary,
-                category=r.category,
-                published_at=r.published_at,
-                score=r.score,
-                is_exclusive=r.is_exclusive,
-            )
-            for r in unique_results
-        ]
+        return self._to_query_results(self._deduplicate(results, k))
 
     def _search_hybrid(
         self,
@@ -484,47 +476,16 @@ class NewsQueryTool:
         """Perform hybrid (vector + BM25) search."""
         if not query.strip():
             return []
-
-        # Generate query embedding
         emit_embedding("生成查询向量...", f"文本长度: {len(query)} 字符")
         query_vector = self.embedding_service.embed_text(query)
         emit_embedding("向量生成完成", f"维度: {len(query_vector)}")
-
-        # Hybrid search with filters
         emit_searching("执行混合搜索 (向量 + BM25)...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
-        search_results = self.repository.hybrid_search(
-            query_text=query,
-            query_vector=query_vector,
-            k=k * 2,
-            vector_boost=0.6,
-            text_boost=0.4,
-            category=category,
-            exclusive_only=exclusive_only,
+        results = self.repository.hybrid_search(
+            query_text=query, query_vector=query_vector,
+            k=k * 2, vector_boost=0.6, text_boost=0.4,
+            category=category, exclusive_only=exclusive_only,
         )
-
-        # Deduplicate by article_id
-        seen_articles = {}
-        for result in search_results:
-            if result.article_id not in seen_articles:
-                seen_articles[result.article_id] = result
-            elif result.score > seen_articles[result.article_id].score:
-                seen_articles[result.article_id] = result
-
-        unique_results = list(seen_articles.values())[:k]
-
-        return [
-            NewsQueryResult(
-                title=r.title,
-                url=r.url,
-                content=r.content,
-                summary=r.article_summary or r.chunk_summary,
-                category=r.category,
-                published_at=r.published_at,
-                score=r.score,
-                is_exclusive=r.is_exclusive,
-            )
-            for r in unique_results
-        ]
+        return self._to_query_results(self._deduplicate(results, k))
 
     def _search_recent(
         self,
@@ -535,32 +496,11 @@ class NewsQueryTool:
         exclusive_only: bool = False,
     ) -> list[NewsQueryResult]:
         """Get recent news, optionally filtered."""
-        emit_searching(
-            f"获取最近 {hours_ago} 小时的新闻...",
-            f"类别: {category or '全部'}, 独家: {exclusive_only}"
+        emit_searching(f"获取最近 {hours_ago} 小时的新闻...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
+        results = self.repository.get_recent_news(
+            hours=hours_ago, limit=limit * 2, category=category, exclusive_only=exclusive_only
         )
-        search_results = self.repository.get_recent_news(
-            hours=hours_ago,
-            limit=limit * 2,
-            category=category,
-            exclusive_only=exclusive_only,
-        )
-
-        unique_results = search_results[:limit]
-
-        return [
-            NewsQueryResult(
-                title=r.title,
-                url=r.url,
-                content=r.content,
-                summary=r.article_summary or r.chunk_summary,
-                category=r.category,
-                published_at=r.published_at,
-                score=r.score,
-                is_exclusive=r.is_exclusive,
-            )
-            for r in unique_results
-        ]
+        return self._to_query_results(results[:limit])
 
 
 # Singleton instance
