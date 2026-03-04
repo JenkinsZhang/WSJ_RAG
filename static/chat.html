@@ -436,7 +436,8 @@
                 <h1>WSJ 新闻问答助手</h1>
                 <p>基于华尔街日报的智能新闻分析</p>
             </div>
-            <label class="stream-toggle">
+            <button onclick="startNewConversation()" style="margin-left:auto;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);color:white;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'">新对话</button>
+            <label class="stream-toggle" style="margin-left:8px;">
                 <span>流式</span>
                 <input type="checkbox" id="streamToggle" checked>
             </label>
@@ -451,9 +452,9 @@
 
         <div class="suggestions" id="suggestions">
             <button class="suggestion-chip" onclick="sendSuggestion('帮我总结今天的科技新闻')">总结科技新闻</button>
-            <button class="suggestion-chip" onclick="sendSuggestion('最近有什么关于AI的独家报道?')">AI独家报道</button>
-            <button class="suggestion-chip" onclick="sendSuggestion('中国相关的财经新闻有哪些?')">中国财经新闻</button>
-            <button class="suggestion-chip" onclick="sendSuggestion('今天的市场行情如何?')">市场行情</button>
+            <button class="suggestion-chip" onclick="sendSuggestion('最近有什么热点话题?')">热点趋势</button>
+            <button class="suggestion-chip" onclick="sendSuggestion('对比一下 Tesla 和 BYD 的新闻')">对比分析</button>
+            <button class="suggestion-chip" onclick="sendSuggestion('帮我深入研究一下AI对就业的影响')">深度研究</button>
         </div>
 
         <div class="chat-input-container">
@@ -482,6 +483,8 @@
         const suggestions = document.getElementById('suggestions');
         const streamToggle = document.getElementById('streamToggle');
 
+        let sessionId = localStorage.getItem('wsj_session_id') || null;
+        let lastMessageId = null;
         let isLoading = false;
 
         function autoResize(textarea) {
@@ -566,7 +569,8 @@
                 'analyzing': '&#128269;',
                 'embedding': '&#128202;',
                 'searching': '&#128270;',
-                'summarizing': '&#128221;'
+                'summarizing': '&#128221;',
+                'evaluating': '&#9878;'
             };
 
             const icon = icons[step.step] || '&#8226;';
@@ -616,7 +620,7 @@
                 const response = await fetch('/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message })
+                    body: JSON.stringify({ message, session_id: sessionId })
                 });
 
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -640,6 +644,11 @@
                             const event = JSON.parse(line.slice(6));
 
                             switch (event.type) {
+                                case 'session':
+                                    sessionId = event.session_id;
+                                    localStorage.setItem('wsj_session_id', sessionId);
+                                    break;
+
                                 case 'step':
                                 case 'tool_progress':
                                     addThinkingStep(thinkingContainer, event);
@@ -661,6 +670,10 @@
                                     contentDiv.classList.remove('streaming-cursor');
                                     const final = fullContent || event.content;
                                     contentDiv.innerHTML = marked.parse(final);
+                                    lastMessageId = event.message_id || null;
+                                    if (lastMessageId) {
+                                        wrapper.appendChild(createFeedbackButtons(lastMessageId));
+                                    }
                                     scrollToBottom();
                                     break;
 
@@ -698,7 +711,7 @@
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message })
+                    body: JSON.stringify({ message, session_id: sessionId })
                 });
 
                 loading.remove();
@@ -710,6 +723,13 @@
 
                 const data = await response.json();
                 contentDiv.innerHTML = marked.parse(data.response);
+                if (data.session_id) {
+                    sessionId = data.session_id;
+                    localStorage.setItem('wsj_session_id', sessionId);
+                }
+                if (data.message_id) {
+                    wrapper.appendChild(createFeedbackButtons(data.message_id));
+                }
 
             } catch (error) {
                 loading.remove();
@@ -741,6 +761,60 @@
                 chatInput.disabled = false;
                 chatInput.focus();
             }
+        }
+
+        function createFeedbackButtons(messageId) {
+            const container = document.createElement('div');
+            container.style.cssText = 'display:flex;gap:8px;margin-top:4px;padding:2px 0;';
+
+            const thumbUp = document.createElement('button');
+            thumbUp.innerHTML = '&#128077;';
+            thumbUp.title = '有帮助';
+            thumbUp.style.cssText = 'background:none;border:1px solid #e0e0e0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;transition:all 0.2s;';
+            thumbUp.onmouseover = () => thumbUp.style.background = '#e8f5e9';
+            thumbUp.onmouseout = () => thumbUp.style.background = 'none';
+            thumbUp.onclick = () => submitFeedback(messageId, 5, container);
+
+            const thumbDown = document.createElement('button');
+            thumbDown.innerHTML = '&#128078;';
+            thumbDown.title = '需要改进';
+            thumbDown.style.cssText = 'background:none;border:1px solid #e0e0e0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;transition:all 0.2s;';
+            thumbDown.onmouseover = () => thumbDown.style.background = '#ffebee';
+            thumbDown.onmouseout = () => thumbDown.style.background = 'none';
+            thumbDown.onclick = () => submitFeedback(messageId, 2, container);
+
+            container.appendChild(thumbUp);
+            container.appendChild(thumbDown);
+            return container;
+        }
+
+        async function submitFeedback(messageId, rating, container) {
+            try {
+                await fetch('/chat/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        message_id: messageId,
+                        rating: rating,
+                    })
+                });
+                container.innerHTML = `<span style="font-size:12px;color:#999;">反馈已提交 ${rating >= 4 ? '&#128077;' : '&#128078;'}</span>`;
+            } catch (e) {
+                console.error('Feedback failed:', e);
+            }
+        }
+
+        function startNewConversation() {
+            sessionId = null;
+            localStorage.removeItem('wsj_session_id');
+            chatMessages.innerHTML = `
+                <div class="welcome-message">
+                    <h2>欢迎使用新闻问答助手</h2>
+                    <p>我可以帮你查询和分析华尔街日报的新闻</p>
+                </div>
+            `;
+            suggestions.style.display = 'flex';
         }
 
         chatInput.focus();
