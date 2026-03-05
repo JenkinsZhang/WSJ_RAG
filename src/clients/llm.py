@@ -170,6 +170,100 @@ class LLMService:
             )
             raise RuntimeError(f"LLM generation failed after {elapsed:.1f}s: [{error_type}] {e}") from e
 
+    def generate_stream(
+            self,
+            prompt: str,
+            max_tokens: Optional[int] = None,
+            temperature: Optional[float] = None,
+            on_chunk: Optional[callable] = None,
+    ) -> str:
+        """
+        Generate text using Claude via Bedrock with streaming.
+
+        Yields tokens as they are generated. Optionally calls on_chunk
+        for each text fragment, enabling real-time delivery to frontends.
+
+        Args:
+            prompt: Input prompt
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature (0-1)
+            on_chunk: Callback called with each text chunk as it arrives
+
+        Returns:
+            str: Complete generated text
+
+        Raises:
+            RuntimeError: If Bedrock API call fails
+        """
+        resolved_max_tokens = max_tokens or self._settings.max_tokens
+        resolved_temp = temperature if temperature is not None else self._settings.temperature
+
+        prompt_len = len(prompt)
+        logger.info(
+            f"LLM generate_stream: prompt_len={prompt_len} chars, "
+            f"max_tokens={resolved_max_tokens}, temp={resolved_temp}"
+        )
+
+        body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": resolved_max_tokens,
+            "temperature": resolved_temp,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+
+        start_time = time.time()
+        full_text = []
+
+        try:
+            response = self.client.invoke_model_with_response_stream(
+                modelId=self._settings.model_id,
+                body=json.dumps(body),
+                contentType="application/json",
+                accept="application/json"
+            )
+
+            for event in response["body"]:
+                chunk = json.loads(event["chunk"]["bytes"])
+                chunk_type = chunk.get("type", "")
+
+                if chunk_type == "content_block_delta":
+                    text = chunk.get("delta", {}).get("text", "")
+                    if text:
+                        full_text.append(text)
+                        if on_chunk:
+                            on_chunk(text)
+
+                elif chunk_type == "message_delta":
+                    stop_reason = chunk.get("delta", {}).get("stop_reason", "")
+                    usage = chunk.get("usage", {})
+                    output_tokens = usage.get("output_tokens", "?")
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"LLM stream done: {elapsed:.1f}s, "
+                        f"output_tokens={output_tokens}, stop_reason={stop_reason}"
+                    )
+                    if stop_reason == "max_tokens":
+                        logger.warning(
+                            f"LLM stream TRUNCATED (hit max_tokens={resolved_max_tokens})"
+                        )
+
+                elif chunk_type == "message_start":
+                    input_tokens = chunk.get("message", {}).get("usage", {}).get("input_tokens", "?")
+                    logger.info(f"LLM stream started: input_tokens={input_tokens}")
+
+            result = "".join(full_text).strip()
+            elapsed = time.time() - start_time
+            logger.info(f"LLM stream complete: {elapsed:.1f}s, output_len={len(result)} chars")
+            return result
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            error_type = type(e).__name__
+            logger.error(f"LLM stream FAILED after {elapsed:.1f}s: [{error_type}] {e}")
+            raise RuntimeError(f"LLM streaming failed after {elapsed:.1f}s: [{error_type}] {e}") from e
+
     # ===== Summarization Methods =====
 
     def summarize_chunk(self, text: str) -> str:

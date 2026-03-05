@@ -174,3 +174,17 @@ def emit_processing(content: str, detail: Optional[str] = None):
 
 def emit_evaluating(content: str, detail: Optional[str] = None):
     emit_progress(ProgressStep.EVALUATING, content, detail)
+
+
+def emit_delta(content: str):
+    """Emit a streaming text delta from within tool execution.
+
+    Unlike progress events, deltas are rendered as assistant message content
+    in the chat UI, not as collapsible processing steps.
+    """
+    tracker = get_progress_tracker()
+    if tracker and tracker._queue:
+        try:
+            tracker._queue.put_nowait({"type": "delta", "content": content})
+        except Exception as e:
+            logger.debug(f"Failed to put delta in queue: {e}")

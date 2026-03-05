@@ -467,14 +467,18 @@ class NewsAgent:
                     final_response += event["content"]
                     yield event
                 elif event_type == "_return_direct":
-                    # return_direct tool output — simulate streaming immediately
                     response_text = event["response"]
-                    logger.info(f"[stream] Simulating stream for return_direct ({len(response_text)} chars)")
-                    for chunk in _chunk_text_for_stream(response_text):
-                        yield {"type": "delta", "content": chunk}
-                        await asyncio.sleep(0.01)
+                    if streamed_to_client:
+                        # Tool already streamed deltas via progress queue — just record final text
+                        logger.info(f"[stream] return_direct: already streamed, recording final ({len(response_text)} chars)")
+                    else:
+                        # Tool didn't stream — simulate streaming
+                        logger.info(f"[stream] return_direct: simulating stream ({len(response_text)} chars)")
+                        for chunk in _chunk_text_for_stream(response_text):
+                            yield {"type": "delta", "content": chunk}
+                            await asyncio.sleep(0.01)
+                        streamed_to_client = True
                     final_response = response_text
-                    streamed_to_client = True
                 elif event_type == "_agent_output":
                     response_text = event["response"]
                     if not streamed_to_client and response_text:

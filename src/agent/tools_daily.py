@@ -22,7 +22,7 @@ from llama_index.core.tools import FunctionTool
 from src.clients.llm import LLMService, get_llm_service
 from src.clients.opensearch import get_opensearch_client
 from src.storage.repository import NewsRepository
-from src.agent.progress import emit_processing, emit_searching, emit_summarizing
+from src.agent.progress import emit_processing, emit_searching, emit_summarizing, emit_delta
 
 logger = logging.getLogger(__name__)
 
@@ -310,13 +310,14 @@ class DailyBriefingTool:
 
         logger.info(
             f"[DailyBriefing] Synthesis prompt: {len(prompt)} chars, "
-            f"{len(category_summaries)} categories, requesting max_tokens=32000"
+            f"{len(category_summaries)} categories, requesting max_tokens=32000 (streaming)"
         )
-        emit_summarizing("正在生成完整报告，预计需要 30-60 秒...", None)
+        emit_summarizing("正在生成完整报告...", None)
 
         try:
-            report = self.llm_service.generate(
-                prompt, max_tokens=32000, temperature=0.4
+            report = self.llm_service.generate_stream(
+                prompt, max_tokens=32000, temperature=0.4,
+                on_chunk=emit_delta,
             )
             logger.info(f"[DailyBriefing] Synthesis complete: {len(report)} chars")
             emit_summarizing("报告生成完成", None)
