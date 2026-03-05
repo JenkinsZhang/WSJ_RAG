@@ -2,9 +2,9 @@
 Daily news briefing tool for LlamaIndex agent.
 
 Generates a comprehensive daily news summary by:
-    1. Fetching all articles for a given date
+    1. Fetching all articles for a given date (OpenSearch date range query)
     2. Grouping by category and deduplicating
-    3. Generating per-category summaries (first LLM pass)
+    3. Generating per-category summaries in parallel (first LLM pass)
     4. Synthesizing a full daily briefing report (second LLM pass)
 """
 
@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, date
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, date, timedelta
 from typing import Optional
 
 from llama_index.core.tools import FunctionTool
@@ -24,7 +25,6 @@ from src.agent.progress import emit_processing, emit_searching, emit_summarizing
 
 logger = logging.getLogger(__name__)
 
-# Category display names
 _CATEGORY_NAMES = {
     "home": "综合", "world": "国际", "china": "中国",
     "tech": "科技", "finance": "金融", "business": "商业",
@@ -89,7 +89,7 @@ class DailyBriefingTool:
     Daily news briefing generator.
 
     Two-pass LLM architecture:
-        Pass 1: Per-category summaries (parallel-ready)
+        Pass 1: Per-category summaries (parallel via ThreadPoolExecutor)
         Pass 2: Synthesize all category summaries into final report
     """
 
@@ -118,7 +118,8 @@ class DailyBriefingTool:
         Generate a comprehensive daily news briefing report.
 
         Fetches all articles for the specified date, groups them by category,
-        generates per-category summaries, then synthesizes a full daily report.
+        generates per-category summaries in parallel, then synthesizes a full
+        daily report.
 
         Args:
             target_date: Date in YYYY-MM-DD format. Defaults to today.
@@ -134,12 +135,10 @@ class DailyBriefingTool:
             - daily_briefing("2026-03-04") → specific date
             - daily_briefing("yesterday") → yesterday's briefing
         """
-        # Parse date
         today = date.today()
         if not target_date or target_date.lower() in ("today", "今天"):
             report_date = today
         elif target_date.lower() in ("yesterday", "昨天"):
-            from datetime import timedelta
             report_date = today - timedelta(days=1)
         else:
             try:
@@ -153,7 +152,7 @@ class DailyBriefingTool:
 
         emit_processing("开始生成每日新闻总结...", date_display)
 
-        # Fetch articles
+        # Fetch articles by exact date range
         articles = self._fetch_articles_for_date(report_date)
         if not articles:
             return f"未找到 {date_display} 的新闻文章。"
@@ -165,8 +164,8 @@ class DailyBriefingTool:
             f"涵盖 {len(grouped)} 个领域",
         )
 
-        # Pass 1: per-category summaries
-        category_summaries = self._generate_category_summaries(grouped)
+        # Pass 1: per-category summaries (parallel)
+        category_summaries = self._generate_category_summaries_parallel(grouped)
         if not category_summaries:
             return f"{date_display} 的文章内容不足以生成总结。"
 
@@ -179,33 +178,15 @@ class DailyBriefingTool:
         return report
 
     def _fetch_articles_for_date(self, report_date: date) -> list:
-        """Fetch all articles for a specific date."""
+        """Fetch all articles for a specific date using OpenSearch date range query."""
         emit_searching("获取当天新闻文章...", report_date.isoformat())
 
-        # Calculate hours from now to cover the target date
-        now = datetime.now()
-        target_start = datetime(report_date.year, report_date.month, report_date.day)
-        target_end = datetime(report_date.year, report_date.month, report_date.day, 23, 59, 59)
+        results = self.repository.get_articles_by_date(
+            target_date=report_date.isoformat(), limit=500
+        )
 
-        # Use hours-based query: calculate hours from now back to target date start
-        hours_back = max(1, int((now - target_start).total_seconds() / 3600) + 1)
-
-        results = self.repository.get_recent_news(hours=hours_back, limit=500)
-
-        # Filter to only the target date
-        filtered = []
-        date_str = report_date.isoformat()
-        for r in results:
-            if r.published_at and date_str in r.published_at:
-                filtered.append(r)
-
-        # If date filter yields nothing, use all results (date format might differ)
-        if not filtered and results:
-            # Fallback: just use all recent results
-            filtered = results
-
-        emit_searching(f"获取到文章", None)
-        return filtered
+        emit_searching("文章获取完成", None)
+        return results
 
     def _group_by_category(self, articles: list) -> dict[str, list]:
         """Group articles by category, deduplicate by article_id."""
@@ -221,46 +202,61 @@ class DailyBriefingTool:
 
         return dict(grouped)
 
-    def _generate_category_summaries(self, grouped: dict[str, list]) -> dict[str, str]:
-        """Generate LLM summary for each category (Pass 1)."""
+    def _summarize_category(self, category: str, articles: list) -> tuple[str, str]:
+        """Generate summary for a single category. Returns (category, summary)."""
+        display_name = _CATEGORY_NAMES.get(category, category)
+
+        article_parts = []
+        for r in articles:
+            parts = [f"- 「{r.title}」"]
+            summary = r.article_summary or r.chunk_summary
+            if summary:
+                parts.append(f"  摘要: {summary}")
+            elif r.content:
+                parts.append(f"  内容: {r.content[:300]}")
+            article_parts.append("\n".join(parts))
+
+        articles_text = "\n\n".join(article_parts)
+
+        try:
+            prompt = CATEGORY_SUMMARY_PROMPT.format(
+                category=display_name,
+                articles=articles_text,
+            )
+            summary = self.llm_service.generate(
+                prompt, max_tokens=1024, temperature=0.3
+            )
+            return category, summary.strip()
+        except Exception as e:
+            logger.warning(f"Category summary failed for {category}: {e}")
+            titles = "\n".join(f"- 「{r.title}」" for r in articles)
+            return category, f"（摘要生成失败）\n相关报道：\n{titles}"
+
+    def _generate_category_summaries_parallel(
+        self, grouped: dict[str, list]
+    ) -> dict[str, str]:
+        """Generate LLM summaries for all categories in parallel (Pass 1)."""
         summaries = {}
         total = len(grouped)
 
-        for i, (category, articles) in enumerate(grouped.items(), 1):
-            display_name = _CATEGORY_NAMES.get(category, category)
-            emit_summarizing(
-                f"生成分类摘要 [{i}/{total}]: {display_name}",
-                None,
-            )
+        emit_summarizing(f"并行生成 {total} 个分类摘要...", None)
 
-            # Build article text for prompt
-            article_parts = []
-            for r in articles:
-                parts = [f"- 「{r.title}」"]
-                summary = r.article_summary or r.chunk_summary
-                if summary:
-                    parts.append(f"  摘要: {summary}")
-                elif r.content:
-                    preview = r.content[:300]
-                    parts.append(f"  内容: {preview}")
-                article_parts.append("\n".join(parts))
+        with ThreadPoolExecutor(max_workers=min(total, 5)) as executor:
+            futures = {
+                executor.submit(self._summarize_category, cat, arts): cat
+                for cat, arts in grouped.items()
+            }
 
-            articles_text = "\n\n".join(article_parts)
-
-            try:
-                prompt = CATEGORY_SUMMARY_PROMPT.format(
-                    category=display_name,
-                    articles=articles_text,
-                )
-                summary = self.llm_service.generate(
-                    prompt, max_tokens=800, temperature=0.3
-                )
-                summaries[category] = summary.strip()
-            except Exception as e:
-                logger.warning(f"Category summary failed for {category}: {e}")
-                # Fallback: just list titles
-                titles = "\n".join(f"- 「{r.title}」" for r in articles)
-                summaries[category] = f"（摘要生成失败）\n相关报道：\n{titles}"
+            for future in as_completed(futures):
+                cat = futures[future]
+                display_name = _CATEGORY_NAMES.get(cat, cat)
+                try:
+                    _, summary = future.result()
+                    summaries[cat] = summary
+                    emit_summarizing(f"分类摘要完成: {display_name}", None)
+                except Exception as e:
+                    logger.warning(f"Category summary failed for {cat}: {e}")
+                    summaries[cat] = f"（摘要生成失败: {e}）"
 
         return summaries
 
@@ -270,7 +266,6 @@ class DailyBriefingTool:
         """Synthesize final daily report from category summaries (Pass 2)."""
         emit_summarizing("综合各领域摘要，生成完整报告...", None)
 
-        # Build summaries text
         summary_parts = []
         for category, summary in category_summaries.items():
             display_name = _CATEGORY_NAMES.get(category, category)
@@ -286,14 +281,13 @@ class DailyBriefingTool:
 
         try:
             report = self.llm_service.generate(
-                prompt, max_tokens=4096, temperature=0.4
+                prompt, max_tokens=8192, temperature=0.4
             )
             emit_summarizing("报告生成完成", None)
             return report.strip()
         except Exception as e:
             logger.error(f"Report synthesis failed: {e}")
             emit_summarizing("报告合成失败，使用分类摘要", str(e))
-            # Fallback: return category summaries directly
             fallback_parts = [f"# 每日新闻总结 — {date_display}\n"]
             for category, summary in category_summaries.items():
                 display_name = _CATEGORY_NAMES.get(category, category)

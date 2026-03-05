@@ -327,6 +327,43 @@ class NewsRepository:
         response = self._client.search(index=self._index_name, body=query)
         return [SearchResult.from_opensearch_hit(hit) for hit in response["hits"]["hits"]]
 
+    def get_articles_by_date(
+            self,
+            target_date: str,
+            limit: int = 500,
+    ) -> list[SearchResult]:
+        """
+        Retrieve articles published on a specific date.
+
+        Args:
+            target_date: Date in YYYY-MM-DD format
+            limit: Maximum number of results
+
+        Returns:
+            list[SearchResult]: Articles from that date, collapsed by article_id
+        """
+        query = {
+            "size": limit,
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {
+                            "published_at": {
+                                "gte": f"{target_date}T00:00:00",
+                                "lte": f"{target_date}T23:59:59",
+                            }
+                        }}
+                    ]
+                }
+            },
+            "sort": [{"published_at": {"order": "desc"}}],
+            "_source": {"excludes": ["content_vector"]},
+            "collapse": {"field": "article_id"},
+        }
+
+        response = self._client.search(index=self._index_name, body=query)
+        return [SearchResult.from_opensearch_hit(hit) for hit in response["hits"]["hits"]]
+
     def get_by_article_id(self, article_id: str) -> list[SearchResult]:
         """
         Retrieve all chunks for a specific article.

@@ -177,7 +177,7 @@ class NewsAgent:
         return BedrockConverse(
             model=self.model_id,
             region_name=settings.llm.region_name,
-            max_tokens=4096,  # Increased from default for detailed Chinese responses
+            max_tokens=8192,  # High limit for daily briefing and detailed Chinese responses
             temperature=0.7,
         )
 
