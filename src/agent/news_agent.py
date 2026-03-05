@@ -268,11 +268,12 @@ class NewsAgent:
             agent = self._create_agent(session)
             response = await agent.run(user_msg=message)
 
-            # Extract the response text
-            if hasattr(response, "response"):
-                response_text = str(response.response)
+            # Extract clean text — str(ChatMessage) adds "assistant: " prefix
+            raw = getattr(response, "response", response)
+            if hasattr(raw, "content"):
+                response_text = str(raw.content)
             else:
-                response_text = str(response)
+                response_text = str(raw)
 
             # Record messages in session
             if session:
@@ -406,7 +407,12 @@ class NewsAgent:
                             "result_preview": raw_output[:500] + ("..." if len(raw_output) > 500 else ""),
                         })
                     elif event_type == "AgentOutput":
-                        response = str(getattr(event, "response", ""))
+                        # Extract clean text — str(ChatMessage) adds "assistant: " prefix
+                        raw_response = getattr(event, "response", None)
+                        if hasattr(raw_response, "content"):
+                            response = str(raw_response.content)
+                        else:
+                            response = str(raw_response or "")
                         logger.info(f"[stream] AgentOutput: len={len(response)}, tool_returned_direct={tool_returned_direct}")
                         # Flush buffered deltas if no tool was called (pure chat response)
                         if not seen_tool_call and delta_buffer:
@@ -505,7 +511,12 @@ class NewsAgent:
             await agent_task
             result = await handler
             if hasattr(result, "response") and not final_response:
-                final_response = str(result.response)
+                raw = result.response
+                # Extract clean text — str(ChatMessage) adds "assistant: " prefix
+                if hasattr(raw, "content"):
+                    final_response = str(raw.content)
+                else:
+                    final_response = str(raw)
 
             # Safety net: if we have content but never streamed it
             if final_response and not streamed_to_client:
