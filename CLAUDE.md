@@ -54,7 +54,8 @@ WSJRAG/
 │   │   ├── tools_trend.py       # 趋势分析工具
 │   │   ├── tools_compare.py     # 对比分析工具
 │   │   ├── tools_research.py    # 深度研究工具
-│   │   ├── news_agent.py        # FunctionAgent 封装 (多轮对话+流式输出)
+│   │   ├── tools_database.py    # 数据库信息工具
+│   │   ├── news_agent.py        # FunctionAgent 封装 (多轮对话+异步进度+流式输出)
 │   │   ├── session.py           # 内存会话管理 (多轮对话)
 │   │   ├── progress.py          # 工具进度跟踪模块
 │   │   └── cli.py               # 命令行交互界面 (支持多轮对话)
@@ -202,9 +203,10 @@ python -m examples.run_indexer --skip-check       # 跳过服务检查
 - `tools_trend.py`: TrendAnalysisTool (趋势分析)
 - `tools_compare.py`: CompareArticlesTool (对比分析)
 - `tools_research.py`: DeepResearchTool (深度研究)
-- `news_agent.py`: NewsAgent - FunctionAgent 封装 (多轮对话 + 流式输出)
-- `progress.py`: 工具进度跟踪模块
-- `cli.py`: 命令行交互界面
+- `tools_database.py`: DatabaseInfoTool (数据库元数据查询)
+- `news_agent.py`: NewsAgent - FunctionAgent 封装 (多轮对话+异步进度流式输出)
+- `progress.py`: 工具进度跟踪模块 (asyncio.Queue 实时推送)
+- `cli.py`: 命令行交互界面 (支持多轮对话)
 
 #### 4.1 多轮对话 (`session.py`)
 
@@ -258,13 +260,17 @@ Agent 配备 4 个工具，根据用户意图自动选择：
 | `trend_analysis` | "热点"/"趋势" | 批量获取近期新闻 → 分类统计 → LLM 识别热门话题 |
 | `compare_articles` | "对比"/"vs" | 多话题分别搜索 → LLM 结构化对比分析 |
 | `deep_research` | "深入分析"/"研究" | LLM 生成多角度搜索 → 合并去重 → 综合研究报告 |
+| `database_info` | "有多少文章"/"最新日期" | OpenSearch 聚合查询 → 统计/最新文章/分类分布 |
+| *(无工具)* | 日常对话/通用知识/追问 | Agent 直接回答，不调用任何工具 |
 
 **工具选择策略 (System Prompt 引导):**
 ```
+日常对话/通用知识/追问 → 直接回答，不调用工具
 用户问具体新闻/事件 → news_query
 用户问"最近什么热门/趋势/热点" → trend_analysis
 用户提到对比、区别、vs → compare_articles
 用户要求深入分析、全面了解 → deep_research
+用户问数据库状态/最新日期/文章数量 → database_info
 复杂问题 → 可以组合多个工具
 ```
 
@@ -595,6 +601,10 @@ articles/**/*.json (爬取的文章)
 - [x] 搜索去重重构 (消除重复代码)
 - [x] 进度步骤折叠 UI
 - [x] 新对话/会话管理 UI
+- [x] Free Chat (Agent 可不调工具直接回答日常对话/通用知识)
+- [x] 数据库信息工具 (database_info: 统计/最新文章/分类分布)
+- [x] 异步进度推送 (双 task 并发 unified queue，实时 SSE)
+- [x] 搜索 fallback (recent 无结果时自动查最新文章)
 
 ### TODO
 - [ ] 批量处理优化 (batch_size参数)
