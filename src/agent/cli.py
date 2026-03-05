@@ -44,19 +44,20 @@ def print_banner() -> None:
     print("  WSJ News Agent - Powered by LlamaIndex + Bedrock Claude")
     print("=" * 60)
     print()
+    print("支持多轮对话，Agent 会记住上下文。")
     print("支持中英文提问，自动识别意图，所有回答使用中文。")
     print()
     print("示例问题:")
-    print("  - 帮我总结一下最近的独家科技新闻")
-    print("  - 特斯拉最近有什么新闻？")
-    print("  - What's happening with Federal Reserve?")
-    print("  - 今天有什么重要的商业新闻？")
+    print("  - 对比一下 Tesla 和 BYD 的新闻")
+    print("  - 帮我深入研究一下 AI 对就业的影响")
+    print("  - 最近有什么热点话题？")
     print()
     print("关键词: 独家(exclusive) | 总结(summarize) | 最近/今天")
     print()
     print("命令:")
     print("  exit, quit, q  - 退出")
-    print("  clear, cls     - 清屏")
+    print("  clear, cls     - 清屏并重置对话")
+    print("  history        - 查看对话历史")
     print("  help, ?        - 显示帮助")
     print()
     print("-" * 60)
@@ -71,6 +72,7 @@ def clear_screen() -> None:
 async def chat_loop(verbose: bool = False) -> None:
     """Main chat loop."""
     from src.agent.news_agent import NewsAgent
+    from src.agent.session import ChatSession
 
     print_banner()
 
@@ -80,7 +82,11 @@ async def chat_loop(verbose: bool = False) -> None:
 
     # Warm up the agent by accessing it
     _ = agent.agent
-    print("Agent ready!")
+
+    # Create chat session for multi-turn conversation
+    session = ChatSession(session_id="cli")
+
+    print("Agent ready! (multi-turn conversation enabled)")
     print()
 
     while True:
@@ -98,18 +104,30 @@ async def chat_loop(verbose: bool = False) -> None:
 
             if user_input.lower() in ('clear', 'cls'):
                 clear_screen()
+                session = ChatSession(session_id="cli")
                 print_banner()
+                print("(conversation history cleared)")
+                print()
                 continue
 
             if user_input.lower() in ('help', '?'):
                 print_banner()
                 continue
 
+            if user_input.lower() == 'history':
+                history = session.get_history_for_prompt()
+                if history:
+                    print("\n" + history)
+                else:
+                    print("\n(no conversation history)")
+                print()
+                continue
+
             # Send to agent
             print("\nAgent: ", end="", flush=True)
 
             try:
-                response = await agent.chat(user_input)
+                response = await agent.chat(user_input, session=session)
                 print(response)
             except Exception as e:
                 print(f"\n[Error] {e}")

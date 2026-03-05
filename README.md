@@ -8,7 +8,8 @@
 - **语义搜索**: 基于向量的语义搜索 + BM25 混合搜索
 - **智能摘要**: LLM 自动生成文章和段落摘要
 - **增量处理**: 自动跳过已处理的文章，支持断点续传
-- **智能 Agent**: 基于 LlamaIndex 的新闻问答，支持中英文查询
+- **智能 Agent**: 基于 LlamaIndex 的多工具新闻问答，多轮对话，自我评估
+- **Chat UI**: SSE 流式聊天界面，实时进度，反馈机制
 - **定时任务**: Windows 任务计划程序自动运行
 
 ## 技术栈
@@ -20,7 +21,8 @@
 | 存储 | OpenSearch (HNSW 向量索引) |
 | LLM | AWS Bedrock Claude |
 | Agent | LlamaIndex FunctionAgent |
-| API | FastAPI |
+| API | FastAPI + SSE |
+| Chat UI | HTML + Markdown + 流式输出 |
 
 ## 环境要求
 
@@ -206,51 +208,67 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 | `/search` | POST | 语义/混合搜索 |
 | `/news/recent` | GET | 获取最近新闻 |
 | `/stats` | GET | 索引统计 |
+| `/session` | POST | 创建会话 |
+| `/session/{id}` | DELETE | 删除会话 |
+| `/chat` | POST | Agent 问答 (支持 session_id) |
+| `/chat/stream` | POST | Agent 问答 (SSE 流式) |
+| `/chat/feedback` | POST | 提交反馈 (👍/👎) |
+| `/chat-ui` | GET | 聊天界面 |
 
-**搜索示例:**
-```bash
-curl -X POST http://localhost:8000/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Federal Reserve interest rates", "k": 5}'
-```
+**Chat UI:** 浏览器访问 `http://localhost:8000/chat-ui`
 
 ---
 
 ### 新闻问答 Agent (CLI)
 
-基于 LlamaIndex 的交互式新闻问答 Agent，支持中英文查询，自动分析用户意图。
+基于 LlamaIndex 的多工具新闻问答 Agent，支持多轮对话、自我评估、中英文查询。
 
 ```bash
-# 交互模式
+# 交互模式 (多轮对话)
 python -m src.agent.cli
 
 # 显示 agent 推理过程
 python -m src.agent.cli --verbose
 
-# 单次查询 (支持中英文)
+# 单次查询
 python -m src.agent.cli --query "帮我总结一下最近的独家科技新闻"
-python -m src.agent.cli --query "What's happening with Tesla?"
 ```
 
-**核心功能:**
-- **多语言查询**: 中文/英文自动翻译为英文检索
-- **智能意图识别**: 自动检测搜索模式、时间范围、独家筛选、总结需求
-- **中文回答**: 所有回答都使用中文
-- **时间感知**: Agent 知道当前日期，会说明新闻的时效性
+**Agent 工具集 (6 个):**
 
-**自动识别的关键词:**
-| 关键词 | 效果 |
-|--------|------|
-| 独家/exclusive | 只搜索独家新闻 |
-| 总结/summarize | 自动生成综合摘要 |
-| 今天/最近/recent | 按时间筛选新闻 |
-| 科技/tech/finance | 按分类筛选 |
+| 工具 | 触发场景 | 功能 |
+|------|---------|------|
+| `news_query` | 具体新闻搜索 | 意图分析 → 搜索 → 自我评估 → 可选总结 |
+| `trend_analysis` | "热点"/"趋势" | 近期新闻统计 → LLM 识别热门话题 |
+| `compare_articles` | "对比"/"vs" | 多话题搜索 → 结构化对比 |
+| `deep_research` | "深入分析" | 多角度搜索 → 综合研究报告 |
+| `database_info` | "有多少文章" | 数据库统计/最新文章/分类分布 |
+| *(Free Chat)* | 日常对话/通用知识 | 直接回答，不调用工具 |
+
+**核心能力:**
+- **多轮对话**: 基于内存 Session，支持上下文记忆
+- **自我评估**: 搜索后 LLM 评分 (1-5)，低分自动切换搜索模式重试
+- **用户反馈**: 👍/👎 反馈注入下一轮 prompt
+- **Free Chat**: 日常对话、通用知识问题直接回答，不调工具
+- **多语言**: 中文/英文自动翻译检索，所有回答使用中文
+- **时间感知**: Agent 知道当前日期，说明新闻时效性
+
+**CLI 命令:**
+| 命令 | 说明 |
+|------|------|
+| `exit`/`quit`/`q` | 退出 |
+| `clear`/`cls` | 清屏并重置对话 |
+| `history` | 查看对话历史 |
+| `help`/`?` | 显示帮助 |
 
 **示例问题:**
-- "帮我总结一下最近的独家科技新闻"
-- "特斯拉最近有什么新闻？"
-- "What's happening with Federal Reserve interest rates?"
-- "今天有什么重要的商业新闻？"
+- "你好" → 直接回答 (Free Chat)
+- "什么是量化宽松" → 直接回答 (通用知识)
+- "帮我总结最近的科技新闻" → news_query
+- "最近有什么热点？" → trend_analysis
+- "对比一下 Tesla 和 BYD" → compare_articles
+- "深入研究 AI 对就业的影响" → deep_research
+- "数据库最新文章是几号的？" → database_info
 
 ---
 
@@ -281,9 +299,15 @@ WSJRAG/
 │   │   ├── state.py             # 索引状态管理
 │   │   └── pipeline.py          # 索引流水线
 │   ├── agent/                   # LlamaIndex Agent
-│   │   ├── tools.py             # NewsQueryTool + QueryAnalyzer
-│   │   ├── news_agent.py        # FunctionAgent 封装
-│   │   └── cli.py               # 命令行交互
+│   │   ├── tools.py             # NewsQueryTool + QueryAnalyzer + 自我评估
+│   │   ├── tools_trend.py       # 趋势分析工具
+│   │   ├── tools_compare.py     # 对比分析工具
+│   │   ├── tools_research.py    # 深度研究工具
+│   │   ├── tools_database.py    # 数据库信息工具
+│   │   ├── news_agent.py        # FunctionAgent 封装 (多轮+异步进度)
+│   │   ├── session.py           # 内存会话管理
+│   │   ├── progress.py          # 异步进度跟踪
+│   │   └── cli.py               # 命令行交互 (多轮对话)
 │   └── utils/
 │       ├── text.py              # 文本分块
 │       └── url.py               # URL 标准化
@@ -451,17 +475,21 @@ cd E:\Programming\Pycharm\WSJRAG
 ## 开发计划
 
 - [x] Playwright 爬虫 (8个分类 + 单URL)
-- [x] OpenSearch 向量索引
+- [x] OpenSearch 向量索引 + Schema 自动同步
 - [x] LlamaIndex RAG 集成
-- [x] 智能 Agent (FunctionAgent + QueryAnalyzer)
+- [x] 智能 Agent (FunctionAgent + 6 个工具)
 - [x] 多语言支持 (中英文自动翻译)
-- [x] 独家新闻过滤
-- [x] 自动总结功能
-- [x] 时间感知 Agent
+- [x] Agent 多轮对话记忆 (内存 Session)
+- [x] Agent 自我评估 + 自动 retry
+- [x] 用户反馈机制 (👍/👎 → prompt 注入)
+- [x] 趋势分析 / 对比分析 / 深度研究工具
+- [x] 数据库信息查询工具
+- [x] Free Chat (不调工具直接回答)
+- [x] Chat UI (SSE 流式 + 折叠进度 + 反馈)
+- [x] 异步进度推送 (双 task unified queue)
 - [x] Windows 定时任务
-- [ ] 本地 LLM 支持
-- [ ] 批量处理优化
-- [ ] Agent 多轮对话记忆
+- [ ] 本地 LLM 支持 (LLMService 接口抽象)
+- [ ] 持久化对话存储 (当前为内存)
 
 ---
 

@@ -75,6 +75,46 @@ SUMMARY_PROMPT = """请根据以下新闻文章内容，用中文给出一个简
 
 请用3-5句话总结以上新闻的核心内容："""
 
+EVALUATION_PROMPT = """Evaluate how relevant the search results are to the user's original query.
+
+User query: {query}
+Search mode used: {mode}
+Result titles:
+{titles}
+
+Rate relevance 1-5 (5=highly relevant, 3=somewhat, 1=irrelevant).
+Respond with ONLY a JSON object like this example:
+{{"score": 4, "reason": "结果与查询高度相关", "suggested_mode": null}}"""
+
+
+@dataclass
+class SearchEvaluation:
+    """Result of self-evaluation on search quality."""
+    score: int
+    reason: str
+    suggested_mode: Optional[str] = None
+
+    @classmethod
+    def from_json(cls, text: str) -> "SearchEvaluation":
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+        # Try to extract JSON object from response
+        import re
+        json_match = re.search(r'\{[^}]+\}', text)
+        if json_match:
+            text = json_match.group()
+        try:
+            data = json.loads(text)
+            return cls(
+                score=max(1, min(5, int(data.get("score", 3)))),
+                reason=data.get("reason", ""),
+                suggested_mode=data.get("suggested_mode"),
+            )
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"Failed to parse evaluation JSON: {text[:200]}")
+            return cls(score=3, reason="评估解析失败")
+
 
 @dataclass
 class QueryIntent:
@@ -212,7 +252,7 @@ class QueryAnalyzer:
 
         try:
             emit_summarizing("调用 LLM 生成总结...", None)
-            summary = self.llm_service.generate(prompt, max_tokens=500, temperature=0.3)
+            summary = self.llm_service.generate(prompt, max_tokens=1000, temperature=0.3)
             emit_summarizing("总结生成完成", summary[:100] + "..." if len(summary) > 100 else summary)
             return summary
         except Exception as e:
@@ -330,6 +370,7 @@ class NewsQueryTool:
         - Detects if user wants a summary of results
         - Chooses the best search mode based on query content
         - Adds temporal context when relevant
+        - Evaluates result quality and retries with a different mode if needed
 
         Args:
             query: The search query or question about news (any language).
@@ -362,34 +403,31 @@ class NewsQueryTool:
 
         try:
             # Execute search based on detected mode
-            mode_names = {"recent": "时间排序", "semantic": "语义搜索", "hybrid": "混合搜索"}
-            emit_searching(
-                f"执行{mode_names.get(intent.mode, intent.mode)}...",
-                f"搜索词: {intent.search_query[:50]}"
-            )
+            results = self._execute_search(intent, max_results)
+            evaluation = self._evaluate_results(query, intent, results)
 
-            if intent.mode == "recent":
-                results = self._search_recent(
-                    query=intent.search_query,
-                    category=intent.category,
-                    hours_ago=intent.hours_ago or 72,
-                    limit=max_results,
-                    exclusive_only=intent.exclusive_only,
+            # Retry with a different mode if quality is low
+            if evaluation.score < 3 and intent.mode != "recent":
+                retry_mode = "semantic" if intent.mode == "hybrid" else "hybrid"
+                logger.info(
+                    f"Low quality score ({evaluation.score}/5), "
+                    f"retrying with {retry_mode} mode"
                 )
-            elif intent.mode == "semantic":
-                results = self._search_semantic(
-                    query=intent.search_query,
-                    category=intent.category,
-                    k=max_results,
+                retry_intent = QueryIntent(
+                    search_query=intent.search_query,
+                    mode=retry_mode,
                     exclusive_only=intent.exclusive_only,
-                )
-            else:  # hybrid (default)
-                results = self._search_hybrid(
-                    query=intent.search_query,
+                    needs_summary=intent.needs_summary,
                     category=intent.category,
-                    k=max_results,
-                    exclusive_only=intent.exclusive_only,
+                    hours_ago=intent.hours_ago,
                 )
+                retry_results = self._execute_search(retry_intent, max_results)
+                retry_evaluation = self._evaluate_results(query, retry_intent, retry_results)
+
+                if retry_evaluation.score > evaluation.score:
+                    results = retry_results
+                    evaluation = retry_evaluation
+                    intent = retry_intent
 
             emit_searching(
                 f"搜索完成，找到 {len(results)} 篇文章",
@@ -411,7 +449,7 @@ class NewsQueryTool:
                 output_parts.append("")
                 output_parts.append("=== 详细文章 ===")
 
-            output_parts.append(f"Found {len(results)} relevant articles:\n")
+            output_parts.append(f"Found {len(results)} relevant articles (quality: {evaluation.score}/5):\n")
             for i, result in enumerate(results, 1):
                 output_parts.append(f"--- Article {i} ---")
                 output_parts.append(result.to_text())
@@ -425,6 +463,28 @@ class NewsQueryTool:
             emit_processing("查询处理失败", str(e))
             return f"Error searching news: {str(e)}"
 
+    @staticmethod
+    def _deduplicate(results: list, limit: int) -> list:
+        """Deduplicate search results by article_id, keeping highest score."""
+        seen = {}
+        for r in results:
+            if r.article_id not in seen or r.score > seen[r.article_id].score:
+                seen[r.article_id] = r
+        return list(seen.values())[:limit]
+
+    @staticmethod
+    def _to_query_results(results: list) -> list[NewsQueryResult]:
+        """Convert SearchResult objects to NewsQueryResult objects."""
+        return [
+            NewsQueryResult(
+                title=r.title, url=r.url, content=r.content,
+                summary=r.article_summary or r.chunk_summary,
+                category=r.category, published_at=r.published_at,
+                score=r.score, is_exclusive=r.is_exclusive,
+            )
+            for r in results
+        ]
+
     def _search_semantic(
         self,
         query: str,
@@ -435,44 +495,14 @@ class NewsQueryTool:
         """Perform semantic (vector) search."""
         if not query.strip():
             return []
-
-        # Generate query embedding
         emit_embedding("生成查询向量...", f"文本长度: {len(query)} 字符")
         query_vector = self.embedding_service.embed_text(query)
         emit_embedding("向量生成完成", f"维度: {len(query_vector)}")
-
-        # Search with filters
         emit_searching("执行向量搜索...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
-        search_results = self.repository.search_by_vector(
-            query_vector,
-            k=k * 2,
-            category=category,
-            exclusive_only=exclusive_only,
+        results = self.repository.search_by_vector(
+            query_vector, k=k * 2, category=category, exclusive_only=exclusive_only
         )
-
-        # Deduplicate by article_id, keep highest score
-        seen_articles = {}
-        for result in search_results:
-            if result.article_id not in seen_articles:
-                seen_articles[result.article_id] = result
-            elif result.score > seen_articles[result.article_id].score:
-                seen_articles[result.article_id] = result
-
-        unique_results = list(seen_articles.values())[:k]
-
-        return [
-            NewsQueryResult(
-                title=r.title,
-                url=r.url,
-                content=r.content,
-                summary=r.article_summary or r.chunk_summary,
-                category=r.category,
-                published_at=r.published_at,
-                score=r.score,
-                is_exclusive=r.is_exclusive,
-            )
-            for r in unique_results
-        ]
+        return self._to_query_results(self._deduplicate(results, k))
 
     def _search_hybrid(
         self,
@@ -484,47 +514,16 @@ class NewsQueryTool:
         """Perform hybrid (vector + BM25) search."""
         if not query.strip():
             return []
-
-        # Generate query embedding
         emit_embedding("生成查询向量...", f"文本长度: {len(query)} 字符")
         query_vector = self.embedding_service.embed_text(query)
         emit_embedding("向量生成完成", f"维度: {len(query_vector)}")
-
-        # Hybrid search with filters
         emit_searching("执行混合搜索 (向量 + BM25)...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
-        search_results = self.repository.hybrid_search(
-            query_text=query,
-            query_vector=query_vector,
-            k=k * 2,
-            vector_boost=0.6,
-            text_boost=0.4,
-            category=category,
-            exclusive_only=exclusive_only,
+        results = self.repository.hybrid_search(
+            query_text=query, query_vector=query_vector,
+            k=k * 2, vector_boost=0.6, text_boost=0.4,
+            category=category, exclusive_only=exclusive_only,
         )
-
-        # Deduplicate by article_id
-        seen_articles = {}
-        for result in search_results:
-            if result.article_id not in seen_articles:
-                seen_articles[result.article_id] = result
-            elif result.score > seen_articles[result.article_id].score:
-                seen_articles[result.article_id] = result
-
-        unique_results = list(seen_articles.values())[:k]
-
-        return [
-            NewsQueryResult(
-                title=r.title,
-                url=r.url,
-                content=r.content,
-                summary=r.article_summary or r.chunk_summary,
-                category=r.category,
-                published_at=r.published_at,
-                score=r.score,
-                is_exclusive=r.is_exclusive,
-            )
-            for r in unique_results
-        ]
+        return self._to_query_results(self._deduplicate(results, k))
 
     def _search_recent(
         self,
@@ -534,33 +533,60 @@ class NewsQueryTool:
         limit: int,
         exclusive_only: bool = False,
     ) -> list[NewsQueryResult]:
-        """Get recent news, optionally filtered."""
+        """Get recent news, optionally filtered. Falls back to latest articles if time window is empty."""
+        emit_searching(f"获取最近 {hours_ago} 小时的新闻...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
+        results = self.repository.get_recent_news(
+            hours=hours_ago, limit=limit * 2, category=category, exclusive_only=exclusive_only
+        )
+        if not results:
+            emit_searching("时间窗口内无结果，获取最新文章...", None)
+            results = self.repository.get_latest_articles(limit=limit, category=category)
+        return self._to_query_results(results[:limit])
+
+    def _execute_search(self, intent: QueryIntent, max_results: int) -> list[NewsQueryResult]:
+        """Execute search based on intent mode."""
+        mode_names = {"recent": "时间排序", "semantic": "语义搜索", "hybrid": "混合搜索"}
         emit_searching(
-            f"获取最近 {hours_ago} 小时的新闻...",
-            f"类别: {category or '全部'}, 独家: {exclusive_only}"
+            f"执行{mode_names.get(intent.mode, intent.mode)}...",
+            f"搜索词: {intent.search_query[:50]}"
         )
-        search_results = self.repository.get_recent_news(
-            hours=hours_ago,
-            limit=limit * 2,
-            category=category,
-            exclusive_only=exclusive_only,
-        )
-
-        unique_results = search_results[:limit]
-
-        return [
-            NewsQueryResult(
-                title=r.title,
-                url=r.url,
-                content=r.content,
-                summary=r.article_summary or r.chunk_summary,
-                category=r.category,
-                published_at=r.published_at,
-                score=r.score,
-                is_exclusive=r.is_exclusive,
+        if intent.mode == "recent":
+            return self._search_recent(
+                query=intent.search_query, category=intent.category,
+                hours_ago=intent.hours_ago or 72, limit=max_results,
+                exclusive_only=intent.exclusive_only,
             )
-            for r in unique_results
-        ]
+        elif intent.mode == "semantic":
+            return self._search_semantic(
+                query=intent.search_query, category=intent.category,
+                k=max_results, exclusive_only=intent.exclusive_only,
+            )
+        else:
+            return self._search_hybrid(
+                query=intent.search_query, category=intent.category,
+                k=max_results, exclusive_only=intent.exclusive_only,
+            )
+
+    def _evaluate_results(self, query: str, intent: QueryIntent, results: list[NewsQueryResult]) -> SearchEvaluation:
+        """Evaluate search result quality using LLM."""
+        if not results:
+            return SearchEvaluation(score=1, reason="无搜索结果")
+
+        from src.agent.progress import emit_evaluating
+        emit_evaluating("评估搜索结果质量...", f"共 {len(results)} 篇文章")
+
+        titles = "\n".join(f"- {r.title}" for r in results[:10])
+        prompt = EVALUATION_PROMPT.format(query=query, mode=intent.mode, titles=titles)
+
+        try:
+            llm = get_llm_service()
+            response = llm.generate(prompt, max_tokens=100, temperature=0.1)
+            evaluation = SearchEvaluation.from_json(response)
+            emit_evaluating(f"搜索质量: {evaluation.score}/5", evaluation.reason)
+            return evaluation
+        except Exception as e:
+            logger.warning(f"Self-evaluation failed: {e}")
+            return SearchEvaluation(score=3, reason="评估失败")
 
 
 # Singleton instance
@@ -611,7 +637,7 @@ Examples:
 - query("帮我总结一下最近的独家科技新闻")
 - query("Trump政策最新动态", max_results=10)
 
-Always use this tool when the user asks about news, current events, or wants information
-from recent WSJ articles.
+Use this tool when the user wants to find or search for specific recent news articles.
+Do NOT use this tool for general knowledge questions, greetings, or casual conversation.
 """,
     )

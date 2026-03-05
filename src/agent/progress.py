@@ -26,6 +26,7 @@ class ProgressStep(str, Enum):
     SEARCHING = "searching"
     SUMMARIZING = "summarizing"
     PROCESSING = "processing"
+    EVALUATING = "evaluating"
 
 
 @dataclass
@@ -169,3 +170,7 @@ def emit_summarizing(content: str, detail: Optional[str] = None):
 
 def emit_processing(content: str, detail: Optional[str] = None):
     emit_progress(ProgressStep.PROCESSING, content, detail)
+
+
+def emit_evaluating(content: str, detail: Optional[str] = None):
+    emit_progress(ProgressStep.EVALUATING, content, detail)

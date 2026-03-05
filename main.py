@@ -11,6 +11,8 @@ Usage:
     uvicorn main:app --reload
 """
 
+import asyncio
+
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -26,6 +28,7 @@ from src.models import NewsArticle
 from src.storage.repository import NewsRepository
 from src.clients import OpenSearchClient, EmbeddingService, LLMService
 from src.agent.news_agent import NewsAgent
+from src.agent.session import get_session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_session_cleanup():
+    """Start background task to clean up expired sessions."""
+    async def cleanup_loop():
+        while True:
+            await asyncio.sleep(300)  # Every 5 minutes
+            get_session_manager().cleanup_expired()
+    asyncio.create_task(cleanup_loop())
+
 
 # Lazy-loaded services
 _os_client: Optional[OpenSearchClient] = None
@@ -260,57 +274,89 @@ def get_agent() -> NewsAgent:
 class ChatRequest(BaseModel):
     """Request model for chat."""
     message: str
+    session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
     """Response model for chat."""
     response: str
+    session_id: str
+    message_id: Optional[str] = None
+
+
+class FeedbackRequest(BaseModel):
+    """Request model for feedback."""
+    session_id: str
+    message_id: str
+    rating: int  # 1-5
+    comment: Optional[str] = None
+
+
+class SessionResponse(BaseModel):
+    """Response model for session creation."""
+    session_id: str
+
+
+@app.post("/session", response_model=SessionResponse)
+async def create_session():
+    """Create a new chat session."""
+    manager = get_session_manager()
+    session = manager.create_session()
+    return SessionResponse(session_id=session.session_id)
+
+
+@app.delete("/session/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a chat session."""
+    manager = get_session_manager()
+    deleted = manager.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "deleted"}
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """
-    Chat with the news agent.
-
-    Send a message and get an AI-powered response about WSJ news.
-    """
+    """Chat with the news agent, with optional session for multi-turn."""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-
     try:
         agent = get_agent()
-        response = await agent.chat(request.message)
-        return ChatResponse(response=response)
+        manager = get_session_manager()
+        session = manager.get_or_create(request.session_id)
+        response = await agent.chat(request.message, session=session)
+        last_msg = session.messages[-1] if session.messages else None
+        return ChatResponse(
+            response=response,
+            session_id=session.session_id,
+            message_id=last_msg.message_id if last_msg else None,
+        )
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
 
-async def generate_sse_events(message: str) -> AsyncGenerator[str, None]:
+async def generate_sse_events(message: str, session_id: Optional[str] = None) -> AsyncGenerator[str, None]:
     """Generate Server-Sent Events for streaming chat."""
     agent = get_agent()
+    manager = get_session_manager()
+    session = manager.get_or_create(session_id)
 
-    async for event in agent.chat_stream(message):
-        # Format as SSE: data: {json}\n\n
+    # Send session_id as first event
+    yield f"data: {json.dumps({'type': 'session', 'session_id': session.session_id}, ensure_ascii=False)}\n\n"
+
+    async for event in agent.chat_stream(message, session=session):
         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """
-    Stream chat with the news agent using Server-Sent Events.
-
-    Returns SSE stream with events:
-    - step: Intermediate steps (thinking, tool calls, tool results)
-    - delta: Streaming text chunks
-    - done: Final complete response
-    - error: Error message if something goes wrong
-    """
+    """Stream chat with SSE, with optional session for multi-turn."""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     return StreamingResponse(
-        generate_sse_events(request.message),
+        generate_sse_events(request.message, request.session_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -318,6 +364,19 @@ async def chat_stream(request: ChatRequest):
             "X-Accel-Buffering": "no",
         }
     )
+
+
+@app.post("/chat/feedback")
+async def submit_feedback(request: FeedbackRequest):
+    """Submit feedback on an assistant message."""
+    if not 1 <= request.rating <= 5:
+        raise HTTPException(status_code=400, detail="Rating must be 1-5")
+    manager = get_session_manager()
+    session = manager.get_session(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    session.add_feedback(request.message_id, request.rating, request.comment)
+    return {"status": "ok"}
 
 
 # ===== Static File Serving =====

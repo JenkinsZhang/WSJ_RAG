@@ -374,3 +374,76 @@ class NewsRepository:
         """
         response = self._client.count(index=self._index_name)
         return response.get("count", 0)
+
+    def get_database_stats(self) -> dict:
+        """
+        Get comprehensive database statistics.
+
+        Returns:
+            dict with keys: total_chunks, total_articles, latest_article,
+            oldest_article, categories, date_range
+        """
+        # Total chunks
+        total = self.count_documents()
+
+        # Aggregation: unique articles, categories, date range
+        agg_query = {
+            "size": 0,
+            "aggs": {
+                "unique_articles": {"cardinality": {"field": "article_id"}},
+                "categories": {
+                    "terms": {"field": "category", "size": 20}
+                },
+                "latest_date": {"max": {"field": "published_at"}},
+                "oldest_date": {"min": {"field": "published_at"}},
+            }
+        }
+
+        try:
+            response = self._client.search(index=self._index_name, body=agg_query)
+            aggs = response.get("aggregations", {})
+
+            categories = {
+                b["key"]: b["doc_count"]
+                for b in aggs.get("categories", {}).get("buckets", [])
+            }
+
+            return {
+                "total_chunks": total,
+                "total_articles": aggs.get("unique_articles", {}).get("value", 0),
+                "latest_date": aggs.get("latest_date", {}).get("value_as_string"),
+                "oldest_date": aggs.get("oldest_date", {}).get("value_as_string"),
+                "categories": categories,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get database stats: {e}")
+            return {"total_chunks": total, "error": str(e)}
+
+    def get_latest_articles(self, limit: int = 5, category: Optional[str] = None) -> list[SearchResult]:
+        """
+        Get the most recently published articles regardless of time window.
+
+        Unlike get_recent_news which filters by a time window, this method
+        simply returns the N most recent articles by published_at date.
+
+        Args:
+            limit: Maximum number of articles
+            category: Optional category filter
+
+        Returns:
+            list[SearchResult]: Articles sorted by published_at descending
+        """
+        must_conditions = [{"exists": {"field": "published_at"}}]
+        if category:
+            must_conditions.append({"term": {"category": category}})
+
+        query = {
+            "size": limit,
+            "query": {"bool": {"must": must_conditions}},
+            "sort": [{"published_at": {"order": "desc"}}],
+            "_source": {"excludes": ["content_vector"]},
+            "collapse": {"field": "article_id"},
+        }
+
+        response = self._client.search(index=self._index_name, body=query)
+        return [SearchResult.from_opensearch_hit(hit) for hit in response["hits"]["hits"]]

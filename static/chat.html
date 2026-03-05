@@ -205,13 +205,44 @@
         }
         .message-content pre code { background: none; padding: 0; color: inherit; }
 
-        /* Thinking Steps - Compact */
+        /* Thinking Steps - Collapsible */
         .thinking-steps {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
             font-size: 13px;
             color: #64748b;
+        }
+
+        .thinking-steps-toggle {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            cursor: pointer;
+            color: #94a3b8;
+            font-size: 12px;
+            border-radius: 4px;
+            transition: color 0.2s;
+        }
+
+        .thinking-steps-toggle:hover {
+            color: #64748b;
+        }
+
+        .thinking-steps.has-hidden .thinking-steps-toggle {
+            display: flex;
+        }
+
+        .thinking-steps-history {
+            display: none;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .thinking-steps.expanded .thinking-steps-history {
+            display: flex;
+        }
+
+        .thinking-steps.expanded .thinking-steps-toggle .toggle-arrow {
+            transform: rotate(90deg);
         }
 
         .thinking-step {
@@ -221,6 +252,9 @@
             padding: 4px 8px;
             background: transparent;
             border-radius: 4px;
+        }
+
+        .thinking-step.latest {
             animation: slideIn 0.15s ease;
         }
 
@@ -237,6 +271,12 @@
             color: #059669;
         }
 
+        .thinking-step.in-history {
+            opacity: 0.6;
+            font-size: 12px;
+            padding: 2px 8px;
+        }
+
         .thinking-step-icon {
             width: 18px;
             height: 18px;
@@ -245,6 +285,12 @@
             justify-content: center;
             flex-shrink: 0;
             font-size: 14px;
+        }
+
+        .thinking-step.in-history .thinking-step-icon {
+            width: 14px;
+            height: 14px;
+            font-size: 11px;
         }
 
         .thinking-step-content {
@@ -265,6 +311,10 @@
             overflow: hidden;
             text-overflow: ellipsis;
             margin-top: 1px;
+        }
+
+        .thinking-step.in-history .thinking-step-detail {
+            display: none;
         }
 
         /* Tool progress - indented */
@@ -325,6 +375,7 @@
             resize: none;
             min-height: 44px;
             max-height: 100px;
+            overflow-y: hidden;
             font-family: inherit;
             transition: border-color 0.2s;
         }
@@ -436,7 +487,8 @@
                 <h1>WSJ 新闻问答助手</h1>
                 <p>基于华尔街日报的智能新闻分析</p>
             </div>
-            <label class="stream-toggle">
+            <button onclick="startNewConversation()" style="margin-left:auto;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);color:white;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'">新对话</button>
+            <label class="stream-toggle" style="margin-left:8px;">
                 <span>流式</span>
                 <input type="checkbox" id="streamToggle" checked>
             </label>
@@ -451,9 +503,9 @@
 
         <div class="suggestions" id="suggestions">
             <button class="suggestion-chip" onclick="sendSuggestion('帮我总结今天的科技新闻')">总结科技新闻</button>
-            <button class="suggestion-chip" onclick="sendSuggestion('最近有什么关于AI的独家报道?')">AI独家报道</button>
-            <button class="suggestion-chip" onclick="sendSuggestion('中国相关的财经新闻有哪些?')">中国财经新闻</button>
-            <button class="suggestion-chip" onclick="sendSuggestion('今天的市场行情如何?')">市场行情</button>
+            <button class="suggestion-chip" onclick="sendSuggestion('最近有什么热点话题?')">热点趋势</button>
+            <button class="suggestion-chip" onclick="sendSuggestion('对比一下 Tesla 和 BYD 的新闻')">对比分析</button>
+            <button class="suggestion-chip" onclick="sendSuggestion('帮我深入研究一下AI对就业的影响')">深度研究</button>
         </div>
 
         <div class="chat-input-container">
@@ -482,6 +534,8 @@
         const suggestions = document.getElementById('suggestions');
         const streamToggle = document.getElementById('streamToggle');
 
+        let sessionId = localStorage.getItem('wsj_session_id') || null;
+        let lastMessageId = null;
         let isLoading = false;
 
         function autoResize(textarea) {
@@ -547,12 +601,51 @@
         function createThinkingStepsContainer() {
             const container = document.createElement('div');
             container.className = 'thinking-steps';
+
+            // Toggle for collapsed history
+            const toggle = document.createElement('div');
+            toggle.className = 'thinking-steps-toggle';
+            toggle.innerHTML = '<span class="toggle-arrow" style="transition:transform 0.2s;font-size:10px;">&#9654;</span><span class="toggle-text">展开处理步骤</span>';
+            toggle.onclick = () => {
+                container.classList.toggle('expanded');
+                const text = toggle.querySelector('.toggle-text');
+                text.textContent = container.classList.contains('expanded') ? '收起处理步骤' : '展开处理步骤';
+            };
+            container.appendChild(toggle);
+
+            // Hidden history area
+            const history = document.createElement('div');
+            history.className = 'thinking-steps-history';
+            container.appendChild(history);
+
+            // Latest step slot
+            const latest = document.createElement('div');
+            latest.className = 'thinking-steps-latest';
+            container.appendChild(latest);
+
             return container;
         }
 
         function addThinkingStep(container, step) {
+            const latestSlot = container.querySelector('.thinking-steps-latest');
+            const historySlot = container.querySelector('.thinking-steps-history');
+            const toggle = container.querySelector('.thinking-steps-toggle');
+
+            // Move current latest to history
+            const currentLatest = latestSlot.querySelector('.thinking-step');
+            if (currentLatest) {
+                currentLatest.classList.remove('latest', 'active');
+                currentLatest.classList.add('completed', 'in-history');
+                const spinner = currentLatest.querySelector('.spinner');
+                if (spinner) spinner.outerHTML = '&#10003;';
+                historySlot.appendChild(currentLatest);
+                container.classList.add('has-hidden');
+                const count = historySlot.children.length;
+                toggle.querySelector('.toggle-text').textContent = `展开处理步骤 (${count})`;
+            }
+
             const stepEl = document.createElement('div');
-            stepEl.className = 'thinking-step active';
+            stepEl.className = 'thinking-step active latest';
 
             if (step.type === 'tool_progress') {
                 stepEl.classList.add('tool-progress');
@@ -566,7 +659,8 @@
                 'analyzing': '&#128269;',
                 'embedding': '&#128202;',
                 'searching': '&#128270;',
-                'summarizing': '&#128221;'
+                'summarizing': '&#128221;',
+                'evaluating': '&#9878;'
             };
 
             const icon = icons[step.step] || '&#8226;';
@@ -581,7 +675,8 @@
                 </span>
             `;
 
-            container.appendChild(stepEl);
+            latestSlot.innerHTML = '';
+            latestSlot.appendChild(stepEl);
             scrollToBottom();
             return stepEl;
         }
@@ -593,6 +688,22 @@
                 const spinner = el.querySelector('.spinner');
                 if (spinner) spinner.outerHTML = '&#10003;';
             });
+            // Move last step to history too
+            const latestSlot = container.querySelector('.thinking-steps-latest');
+            const historySlot = container.querySelector('.thinking-steps-history');
+            if (latestSlot && historySlot) {
+                const last = latestSlot.querySelector('.thinking-step');
+                if (last) {
+                    last.classList.remove('latest');
+                    last.classList.add('in-history');
+                    historySlot.appendChild(last);
+                }
+                latestSlot.innerHTML = '';
+                container.classList.add('has-hidden');
+                const count = historySlot.children.length;
+                const toggle = container.querySelector('.toggle-text');
+                if (toggle) toggle.textContent = `查看处理步骤 (${count})`;
+            }
         }
 
         function escapeHtml(text) {
@@ -616,7 +727,7 @@
                 const response = await fetch('/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message })
+                    body: JSON.stringify({ message, session_id: sessionId })
                 });
 
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -640,6 +751,11 @@
                             const event = JSON.parse(line.slice(6));
 
                             switch (event.type) {
+                                case 'session':
+                                    sessionId = event.session_id;
+                                    localStorage.setItem('wsj_session_id', sessionId);
+                                    break;
+
                                 case 'step':
                                 case 'tool_progress':
                                     addThinkingStep(thinkingContainer, event);
@@ -661,6 +777,10 @@
                                     contentDiv.classList.remove('streaming-cursor');
                                     const final = fullContent || event.content;
                                     contentDiv.innerHTML = marked.parse(final);
+                                    lastMessageId = event.message_id || null;
+                                    if (lastMessageId) {
+                                        wrapper.appendChild(createFeedbackButtons(lastMessageId));
+                                    }
                                     scrollToBottom();
                                     break;
 
@@ -698,7 +818,7 @@
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message })
+                    body: JSON.stringify({ message, session_id: sessionId })
                 });
 
                 loading.remove();
@@ -710,6 +830,13 @@
 
                 const data = await response.json();
                 contentDiv.innerHTML = marked.parse(data.response);
+                if (data.session_id) {
+                    sessionId = data.session_id;
+                    localStorage.setItem('wsj_session_id', sessionId);
+                }
+                if (data.message_id) {
+                    wrapper.appendChild(createFeedbackButtons(data.message_id));
+                }
 
             } catch (error) {
                 loading.remove();
@@ -741,6 +868,60 @@
                 chatInput.disabled = false;
                 chatInput.focus();
             }
+        }
+
+        function createFeedbackButtons(messageId) {
+            const container = document.createElement('div');
+            container.style.cssText = 'display:flex;gap:8px;margin-top:4px;padding:2px 0;';
+
+            const thumbUp = document.createElement('button');
+            thumbUp.innerHTML = '&#128077;';
+            thumbUp.title = '有帮助';
+            thumbUp.style.cssText = 'background:none;border:1px solid #e0e0e0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;transition:all 0.2s;';
+            thumbUp.onmouseover = () => thumbUp.style.background = '#e8f5e9';
+            thumbUp.onmouseout = () => thumbUp.style.background = 'none';
+            thumbUp.onclick = () => submitFeedback(messageId, 5, container);
+
+            const thumbDown = document.createElement('button');
+            thumbDown.innerHTML = '&#128078;';
+            thumbDown.title = '需要改进';
+            thumbDown.style.cssText = 'background:none;border:1px solid #e0e0e0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;transition:all 0.2s;';
+            thumbDown.onmouseover = () => thumbDown.style.background = '#ffebee';
+            thumbDown.onmouseout = () => thumbDown.style.background = 'none';
+            thumbDown.onclick = () => submitFeedback(messageId, 2, container);
+
+            container.appendChild(thumbUp);
+            container.appendChild(thumbDown);
+            return container;
+        }
+
+        async function submitFeedback(messageId, rating, container) {
+            try {
+                await fetch('/chat/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        message_id: messageId,
+                        rating: rating,
+                    })
+                });
+                container.innerHTML = `<span style="font-size:12px;color:#999;">反馈已提交 ${rating >= 4 ? '&#128077;' : '&#128078;'}</span>`;
+            } catch (e) {
+                console.error('Feedback failed:', e);
+            }
+        }
+
+        function startNewConversation() {
+            sessionId = null;
+            localStorage.removeItem('wsj_session_id');
+            chatMessages.innerHTML = `
+                <div class="welcome-message">
+                    <h2>欢迎使用新闻问答助手</h2>
+                    <p>我可以帮你查询和分析华尔街日报的新闻</p>
+                </div>
+            `;
+            suggestions.style.display = 'flex';
         }
 
         chatInput.focus();

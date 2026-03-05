@@ -93,7 +93,7 @@ class LLMSettings:
     """
     region_name: str = "us-east-1"
     model_id: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    max_tokens: int = 512
+    max_tokens: int = 1024
     temperature: float = 0.3
     max_workers: int = 5
 
@@ -146,7 +146,7 @@ def _load_from_env() -> Settings:
     llm = LLMSettings(
         region_name=os.getenv("AWS_REGION", "us-east-1"),
         model_id=os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
-        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "512")),
+        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "1024")),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
         max_workers=int(os.getenv("LLM_MAX_WORKERS", "5")),
     )
