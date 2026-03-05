@@ -7,8 +7,8 @@ operations with parallel processing.
 
 Architecture:
     - Uses boto3 for Bedrock API access
-    - Supports Claude 3 Haiku for cost-effective summarization
     - Thread pool for parallel chunk summarization
+    - Configurable read timeout for long generations
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 import boto3
+from botocore.config import Config as BotoConfig
 
 from src.config import get_settings
 
@@ -38,6 +39,10 @@ Title: {title}
 Content:
 {content}"""
 
+# Bedrock read timeout — long generations (8k tokens) can take 2+ minutes
+_BEDROCK_READ_TIMEOUT = 300  # seconds
+_BEDROCK_CONNECT_TIMEOUT = 10
+
 
 class LLMService:
     """
@@ -45,35 +50,30 @@ class LLMService:
 
     Integrates with AWS Bedrock to provide Claude-powered
     text generation, optimized for news summarization tasks.
-
-    Attributes:
-        model_id: Bedrock model identifier
-        region: AWS region
-
-    Example:
-        >>> service = LLMService()
-        >>> summary = service.summarize_chunk("The Fed announced...")
-        >>> print(summary)
     """
 
     def __init__(self) -> None:
-        """Initialize the LLM service with configuration."""
         settings = get_settings()
         self._settings = settings.llm
         self._client = None
 
     @property
     def client(self):
-        """
-        Lazy initialization of Bedrock client.
-
-        Returns:
-            boto3 Bedrock runtime client
-        """
         if self._client is None:
+            boto_config = BotoConfig(
+                read_timeout=_BEDROCK_READ_TIMEOUT,
+                connect_timeout=_BEDROCK_CONNECT_TIMEOUT,
+                retries={"max_attempts": 2, "mode": "adaptive"},
+            )
             self._client = boto3.client(
                 "bedrock-runtime",
-                region_name=self._settings.region_name
+                region_name=self._settings.region_name,
+                config=boto_config,
+            )
+            logger.info(
+                f"Bedrock client initialized: model={self._settings.model_id}, "
+                f"region={self._settings.region_name}, "
+                f"read_timeout={_BEDROCK_READ_TIMEOUT}s"
             )
         return self._client
 
@@ -86,7 +86,7 @@ class LLMService:
             temperature: Optional[float] = None,
     ) -> str:
         """
-        Generate text using Claude.
+        Generate text using Claude via Bedrock.
 
         Args:
             prompt: Input prompt
@@ -99,14 +99,25 @@ class LLMService:
         Raises:
             RuntimeError: If Bedrock API call fails
         """
+        resolved_max_tokens = max_tokens or self._settings.max_tokens
+        resolved_temp = temperature if temperature is not None else self._settings.temperature
+
+        prompt_len = len(prompt)
+        logger.info(
+            f"LLM generate: prompt_len={prompt_len} chars, "
+            f"max_tokens={resolved_max_tokens}, temp={resolved_temp}"
+        )
+
         body = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens or self._settings.max_tokens,
-            "temperature": temperature if temperature is not None else self._settings.temperature,
+            "max_tokens": resolved_max_tokens,
+            "temperature": resolved_temp,
             "messages": [
                 {"role": "user", "content": prompt}
             ]
         }
+
+        start_time = time.time()
 
         try:
             response = self.client.invoke_model(
@@ -116,27 +127,53 @@ class LLMService:
                 accept="application/json"
             )
 
+            elapsed = time.time() - start_time
             result = json.loads(response["body"].read())
-            return result["content"][0]["text"].strip()
+
+            # Extract response metadata
+            output_text = result["content"][0]["text"].strip()
+            stop_reason = result.get("stop_reason", "unknown")
+            usage = result.get("usage", {})
+            input_tokens = usage.get("input_tokens", "?")
+            output_tokens = usage.get("output_tokens", "?")
+
+            logger.info(
+                f"LLM response: {elapsed:.1f}s, "
+                f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
+                f"stop_reason={stop_reason}, output_len={len(output_text)} chars"
+            )
+
+            if stop_reason == "max_tokens":
+                logger.warning(
+                    f"LLM output TRUNCATED (hit max_tokens={resolved_max_tokens}). "
+                    f"Output: {output_tokens} tokens. Consider increasing max_tokens."
+                )
+
+            return output_text
+
+        except self.client.exceptions.ThrottlingException as e:
+            elapsed = time.time() - start_time
+            logger.error(f"Bedrock THROTTLED after {elapsed:.1f}s: {e}")
+            raise RuntimeError(f"Bedrock API throttled: {e}") from e
+
+        except self.client.exceptions.ModelTimeoutException as e:
+            elapsed = time.time() - start_time
+            logger.error(f"Bedrock MODEL TIMEOUT after {elapsed:.1f}s: {e}")
+            raise RuntimeError(f"Bedrock model timeout: {e}") from e
 
         except Exception as e:
-            logger.error(f"Bedrock API call failed: {e}")
-            raise RuntimeError(f"LLM generation failed: {e}") from e
+            elapsed = time.time() - start_time
+            error_type = type(e).__name__
+            logger.error(
+                f"Bedrock API FAILED after {elapsed:.1f}s: "
+                f"[{error_type}] {e}"
+            )
+            raise RuntimeError(f"LLM generation failed after {elapsed:.1f}s: [{error_type}] {e}") from e
 
     # ===== Summarization Methods =====
 
     def summarize_chunk(self, text: str) -> str:
-        """
-        Generate a brief summary for a text chunk.
-
-        Produces a 1-2 sentence summary capturing the key points.
-
-        Args:
-            text: Chunk text to summarize
-
-        Returns:
-            str: Brief summary
-        """
+        """Generate a brief 1-2 sentence summary for a text chunk."""
         if not text or not text.strip():
             return ""
 
@@ -144,23 +181,10 @@ class LLMService:
         return self.generate(prompt, max_tokens=150)
 
     def summarize_article(self, title: str, content: str) -> str:
-        """
-        Generate a comprehensive summary for a full article.
-
-        Produces a 3-5 sentence summary covering key events,
-        entities, and implications.
-
-        Args:
-            title: Article headline
-            content: Full article content
-
-        Returns:
-            str: Article summary
-        """
+        """Generate a 3-5 sentence summary for a full article."""
         if not content or not content.strip():
             return ""
 
-        # Truncate if too long (respect context limits)
         max_content_len = 15000
         if len(content) > max_content_len:
             content = content[:max_content_len] + "..."
@@ -174,29 +198,14 @@ class LLMService:
             chunks: list[str],
             max_workers: Optional[int] = None,
     ) -> list[str]:
-        """
-        Summarize multiple chunks in parallel.
-
-        Uses thread pool for concurrent API calls to improve
-        throughput when processing documents with many chunks.
-
-        Args:
-            chunks: List of chunk texts
-            max_workers: Maximum parallel workers
-
-        Returns:
-            list[str]: Summaries in same order as input chunks
-
-        Note:
-            Failed chunks return empty strings rather than raising.
-        """
+        """Summarize multiple chunks in parallel using thread pool."""
         if not chunks:
             return []
 
         workers = max_workers or self._settings.max_workers
         summaries = [""] * len(chunks)
 
-        logger.debug(f"Summarizing {len(chunks)} chunks with {workers} workers")
+        logger.info(f"Batch summarizing {len(chunks)} chunks with {workers} workers")
         start_time = time.time()
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -214,22 +223,14 @@ class LLMService:
                     summaries[idx] = ""
 
         elapsed = time.time() - start_time
-        logger.debug(f"Batch summarization completed in {elapsed:.2f}s")
+        logger.info(f"Batch summarization completed: {len(chunks)} chunks in {elapsed:.1f}s")
 
         return summaries
 
     # ===== Health Check =====
 
     def health_check(self) -> dict:
-        """
-        Check Bedrock service accessibility.
-
-        Performs a minimal test call to verify credentials
-        and model availability.
-
-        Returns:
-            dict: Health status with model info
-        """
+        """Check Bedrock service accessibility."""
         try:
             response = self.generate("Say 'OK' in one word.", max_tokens=10)
             return {
@@ -254,12 +255,6 @@ _default_service: Optional[LLMService] = None
 
 
 def get_llm_service() -> LLMService:
-    """
-    Get the singleton LLM service instance.
-
-    Returns:
-        LLMService: Shared service instance
-    """
     global _default_service
     if _default_service is None:
         _default_service = LLMService()
