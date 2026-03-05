@@ -57,6 +57,7 @@ WSJRAG/
 │   │   ├── tools_compare.py     # 对比分析工具
 │   │   ├── tools_research.py    # 深度研究工具
 │   │   ├── tools_database.py    # 数据库信息工具
+│   │   ├── tools_daily.py      # 每日新闻总结工具 (两轮LLM)
 │   │   ├── news_agent.py        # FunctionAgent 封装 (多轮对话+异步进度+流式输出)
 │   │   ├── session.py           # 内存会话管理 (多轮对话)
 │   │   ├── progress.py          # 工具进度跟踪模块
@@ -207,6 +208,7 @@ python -m scripts.run_indexer --skip-check       # 跳过服务检查
 - `tools_compare.py`: CompareArticlesTool (对比分析)
 - `tools_research.py`: DeepResearchTool (深度研究)
 - `tools_database.py`: DatabaseInfoTool (数据库元数据查询)
+- `tools_daily.py`: DailyBriefingTool (每日新闻总结, 两轮LLM)
 - `session.py`: 内存会话管理 (ChatSession + ChatSessionManager)
 - `news_agent.py`: NewsAgent - FunctionAgent 封装 (多轮对话+异步进度流式输出)
 - `progress.py`: 工具进度跟踪模块 (asyncio.Queue 实时推送)
@@ -265,6 +267,7 @@ Agent 配备 4 个工具，根据用户意图自动选择：
 | `compare_articles` | "对比"/"vs" | 多话题分别搜索 → LLM 结构化对比分析 |
 | `deep_research` | "深入分析"/"研究" | LLM 生成多角度搜索 → 合并去重 → 综合研究报告 |
 | `database_info` | "有多少文章"/"最新日期" | OpenSearch 聚合查询 → 统计/最新文章/分类分布 |
+| `daily_briefing` | "今日总结"/"每日简报" | 两轮 LLM: 分类摘要 → 综合每日报告 (2000-3000字) |
 | *(无工具)* | 日常对话/通用知识/追问 | Agent 直接回答，不调用任何工具 |
 
 **工具选择策略 (System Prompt 引导):**
@@ -275,6 +278,7 @@ Agent 配备 4 个工具，根据用户意图自动选择：
 用户提到对比、区别、vs → compare_articles
 用户要求深入分析、全面了解 → deep_research
 用户问数据库状态/最新日期/文章数量 → database_info
+用户要每日新闻总结/简报/今天发生了什么 → daily_briefing
 复杂问题 → 可以组合多个工具
 ```
 

@@ -243,6 +243,7 @@ python -m src.agent.cli --query "帮我总结一下最近的独家科技新闻"
 | `compare_articles` | "对比"/"vs" | 多话题搜索 → 结构化对比 |
 | `deep_research` | "深入分析" | 多角度搜索 → 综合研究报告 |
 | `database_info` | "有多少文章" | 数据库统计/最新文章/分类分布 |
+| `daily_briefing` | "今日总结"/"每日简报" | 两轮LLM综合每日报告 |
 | *(Free Chat)* | 日常对话/通用知识 | 直接回答，不调用工具 |
 
 **核心能力:**
@@ -306,6 +307,7 @@ WSJRAG/
 │   │   ├── tools_compare.py     # 对比分析工具
 │   │   ├── tools_research.py    # 深度研究工具
 │   │   ├── tools_database.py    # 数据库信息工具
+│   │   ├── tools_daily.py      # 每日新闻总结工具
 │   │   ├── news_agent.py        # FunctionAgent 封装 (多轮+异步进度)
 │   │   ├── session.py           # 内存会话管理
 │   │   ├── progress.py          # 异步进度跟踪
