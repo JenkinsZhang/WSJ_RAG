@@ -533,11 +533,14 @@ class NewsQueryTool:
         limit: int,
         exclusive_only: bool = False,
     ) -> list[NewsQueryResult]:
-        """Get recent news, optionally filtered."""
+        """Get recent news, optionally filtered. Falls back to latest articles if time window is empty."""
         emit_searching(f"获取最近 {hours_ago} 小时的新闻...", f"类别: {category or '全部'}, 独家: {exclusive_only}")
         results = self.repository.get_recent_news(
             hours=hours_ago, limit=limit * 2, category=category, exclusive_only=exclusive_only
         )
+        if not results:
+            emit_searching("时间窗口内无结果，获取最新文章...", None)
+            results = self.repository.get_latest_articles(limit=limit, category=category)
         return self._to_query_results(results[:limit])
 
     def _execute_search(self, intent: QueryIntent, max_results: int) -> list[NewsQueryResult]:
