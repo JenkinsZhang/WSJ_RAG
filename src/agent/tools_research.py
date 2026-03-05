@@ -21,7 +21,7 @@ from src.clients.embedding import EmbeddingService, get_embedding_service
 from src.clients.llm import LLMService, get_llm_service
 from src.clients.opensearch import get_opensearch_client
 from src.storage.repository import NewsRepository
-from src.agent.tools import NewsQueryTool
+from src.agent.models import deduplicate_results
 from src.agent.progress import (
     emit_analyzing, emit_searching, emit_summarizing, emit_processing
 )
@@ -196,7 +196,7 @@ class DeepResearchTool:
                     vector_boost=0.6,
                     text_boost=0.4,
                 )
-                deduped = NewsQueryTool._deduplicate(results, per_angle_limit)
+                deduped = deduplicate_results(results, per_angle_limit)
                 all_results.extend(deduped)
 
                 emit_searching(

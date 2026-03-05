@@ -18,7 +18,7 @@ from src.clients.embedding import EmbeddingService, get_embedding_service
 from src.clients.llm import LLMService, get_llm_service
 from src.clients.opensearch import get_opensearch_client
 from src.storage.repository import NewsRepository
-from src.agent.tools import NewsQueryTool
+from src.agent.models import deduplicate_results
 from src.agent.progress import emit_processing, emit_searching, emit_summarizing
 
 logger = logging.getLogger(__name__)
@@ -144,8 +144,7 @@ class CompareArticlesTool:
                     text_boost=0.4,
                 )
 
-                # Deduplicate using the existing static method
-                deduped = NewsQueryTool._deduplicate(results, max_per_topic)
+                deduped = deduplicate_results(results, max_per_topic)
 
                 articles = []
                 for r in deduped:

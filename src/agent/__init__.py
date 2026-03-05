@@ -8,12 +8,14 @@ Provides LlamaIndex-based agents for news Q&A:
 """
 
 from src.agent.news_agent import NewsAgent, get_news_agent
-from src.agent.tools import (
-    NewsQueryTool,
+from src.agent.models import (
     NewsQueryResult,
     SearchMode,
-    QueryAnalyzer,
     QueryIntent,
+)
+from src.agent.query_analyzer import QueryAnalyzer
+from src.agent.tools_query import (
+    NewsQueryTool,
     get_news_query_tool,
     create_news_query_function_tool,
 )

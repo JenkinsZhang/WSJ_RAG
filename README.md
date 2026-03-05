@@ -161,31 +161,31 @@ articles/
 
 ```bash
 # 索引所有待处理文章
-python -m examples.run_indexer
+python -m scripts.run_indexer
 
 # 索引单个 JSON 文件
-python -m examples.run_indexer --file articles/tech/2026-01-25/article.json
+python -m scripts.run_indexer --file articles/tech/2026-01-25/article.json
 
 # 强制重新索引 (即使已索引)
-python -m examples.run_indexer --file articles/tech/2026-01-25/article.json --force
+python -m scripts.run_indexer --file articles/tech/2026-01-25/article.json --force
 
 # 只索引特定分类
-python -m examples.run_indexer --category tech
+python -m scripts.run_indexer --category tech
 
 # 预览待处理文件 (不实际索引)
-python -m examples.run_indexer --dry-run
+python -m scripts.run_indexer --dry-run
 
 # 查看索引统计
-python -m examples.run_indexer --stats
+python -m scripts.run_indexer --stats
 
 # 重试失败的文件
-python -m examples.run_indexer --retry-failed
+python -m scripts.run_indexer --retry-failed
 
 # 清除失败记录
-python -m examples.run_indexer --clear-failed
+python -m scripts.run_indexer --clear-failed
 
 # 跳过服务检查
-python -m examples.run_indexer --skip-check
+python -m scripts.run_indexer --skip-check
 ```
 
 **索引状态文件:** `data/indexed_files.json`
@@ -276,7 +276,7 @@ python -m src.agent.cli --query "帮我总结一下最近的独家科技新闻"
 
 ```
 WSJRAG/
-├── run_pipeline.py              # 完整流程入口
+├── run_pipeline.py              # 完整流程入口 (爬虫+索引)
 ├── main.py                      # FastAPI 应用
 ├── requirements.txt             # Python 依赖
 ├── src/
@@ -299,7 +299,9 @@ WSJRAG/
 │   │   ├── state.py             # 索引状态管理
 │   │   └── pipeline.py          # 索引流水线
 │   ├── agent/                   # LlamaIndex Agent
-│   │   ├── tools.py             # NewsQueryTool + QueryAnalyzer + 自我评估
+│   │   ├── models.py            # 共享数据类 (QueryIntent, NewsQueryResult 等)
+│   │   ├── query_analyzer.py    # 查询意图分析 + 结果总结
+│   │   ├── tools_query.py       # 新闻搜索工具 (NewsQueryTool)
 │   │   ├── tools_trend.py       # 趋势分析工具
 │   │   ├── tools_compare.py     # 对比分析工具
 │   │   ├── tools_research.py    # 深度研究工具
@@ -312,12 +314,12 @@ WSJRAG/
 │       ├── text.py              # 文本分块
 │       └── url.py               # URL 标准化
 ├── scripts/
+│   ├── run_indexer.py           # 索引 CLI 工具
+│   ├── clean_article_urls.py    # URL 清理脚本
 │   ├── schedule_pipeline.ps1    # Windows 定时任务脚本
-│   ├── run_pipeline.bat         # 定时任务批处理 (自动生成)
-│   └── clean_article_urls.py    # URL 清理脚本
+│   └── run_pipeline.bat         # 定时任务批处理 (自动生成)
 ├── examples/
-│   ├── run_indexer.py           # 索引脚本
-│   └── demo_pipeline.py         # 演示脚本
+│   └── demo_pipeline.py         # 完整流程演示
 ├── articles/                    # 爬取的文章 (gitignore)
 ├── data/                        # 状态文件 (gitignore)
 │   ├── crawled_urls.json        # 爬虫 URL 去重
@@ -454,7 +456,7 @@ python scripts/clean_article_urls.py --apply
 ```bash
 # 方法1: 清除索引状态，重新索引
 del data\indexed_files.json
-python -m examples.run_indexer
+python -m scripts.run_indexer
 
 # 方法2: 删除 OpenSearch 索引，重建
 curl -X DELETE http://localhost:9200/wsj_news

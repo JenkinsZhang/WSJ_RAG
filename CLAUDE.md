@@ -50,7 +50,9 @@ WSJRAG/
 │   │   ├── state.py             # indexed_files.json 管理
 │   │   └── pipeline.py          # 索引主流程
 │   ├── agent/                   # LlamaIndex Agent 模块
-│   │   ├── tools.py             # NewsQueryTool + QueryAnalyzer + 自我评估
+│   │   ├── models.py            # 共享数据类 (QueryIntent, NewsQueryResult, SearchEvaluation)
+│   │   ├── query_analyzer.py    # 查询意图分析 + 结果总结 (QueryAnalyzer)
+│   │   ├── tools_query.py       # 新闻搜索工具 (NewsQueryTool + 自我评估)
 │   │   ├── tools_trend.py       # 趋势分析工具
 │   │   ├── tools_compare.py     # 对比分析工具
 │   │   ├── tools_research.py    # 深度研究工具
@@ -63,12 +65,12 @@ WSJRAG/
 │       ├── text.py              # 文本分块器
 │       └── url.py               # URL 标准化
 ├── scripts/
+│   ├── run_indexer.py           # 索引 CLI 工具 (支持单文件)
+│   ├── clean_article_urls.py    # 清理已有文章URL
 │   ├── schedule_pipeline.ps1    # Windows 定时任务脚本
-│   ├── run_pipeline.bat         # 定时任务批处理 (自动生成)
-│   └── clean_article_urls.py    # 清理已有文章URL
+│   └── run_pipeline.bat         # 定时任务批处理 (自动生成)
 ├── examples/
-│   ├── demo_pipeline.py         # 完整流程演示
-│   └── run_indexer.py           # 索引脚本 (支持单文件)
+│   └── demo_pipeline.py         # 完整流程演示
 ├── static/
 │   └── chat.html                # Chat UI 前端页面
 ├── articles/                    # 爬取的文章 (按分类/日期组织)
@@ -136,15 +138,15 @@ python -m src.crawler.wsj_crawler --url <url> --category-for-url tech
 
 **用法:**
 ```bash
-python -m examples.run_indexer                    # 索引所有待处理
-python -m examples.run_indexer --file <path>      # 索引单个文件
-python -m examples.run_indexer --file <path> --force  # 强制重新索引
-python -m examples.run_indexer --category tech    # 索引特定分类
-python -m examples.run_indexer --retry-failed     # 重试失败
-python -m examples.run_indexer --stats            # 查看统计
-python -m examples.run_indexer --dry-run          # 预览待处理
-python -m examples.run_indexer --clear-failed     # 清除失败记录
-python -m examples.run_indexer --skip-check       # 跳过服务检查
+python -m scripts.run_indexer                    # 索引所有待处理
+python -m scripts.run_indexer --file <path>      # 索引单个文件
+python -m scripts.run_indexer --file <path> --force  # 强制重新索引
+python -m scripts.run_indexer --category tech    # 索引特定分类
+python -m scripts.run_indexer --retry-failed     # 重试失败
+python -m scripts.run_indexer --stats            # 查看统计
+python -m scripts.run_indexer --dry-run          # 预览待处理
+python -m scripts.run_indexer --clear-failed     # 清除失败记录
+python -m scripts.run_indexer --skip-check       # 跳过服务检查
 ```
 
 **indexed_files.json 格式:**
@@ -198,12 +200,14 @@ python -m examples.run_indexer --skip-check       # 跳过服务检查
 基于 LlamaIndex FunctionAgent 的智能新闻问答 Agent，支持多轮对话、多工具协作、自我评估和用户反馈。
 
 **组件:**
-- `session.py`: 内存会话管理 (ChatSession + ChatSessionManager)
-- `tools.py`: NewsQueryTool + QueryAnalyzer + 自我评估 (SearchEvaluation)
+- `models.py`: 共享数据类 (QueryIntent, NewsQueryResult, SearchEvaluation) + 工具函数 (去重, 结果转换)
+- `query_analyzer.py`: QueryAnalyzer (意图分析 + 结果总结) + prompt 模板
+- `tools_query.py`: NewsQueryTool (核心搜索 + 自我评估 + retry)
 - `tools_trend.py`: TrendAnalysisTool (趋势分析)
 - `tools_compare.py`: CompareArticlesTool (对比分析)
 - `tools_research.py`: DeepResearchTool (深度研究)
 - `tools_database.py`: DatabaseInfoTool (数据库元数据查询)
+- `session.py`: 内存会话管理 (ChatSession + ChatSessionManager)
 - `news_agent.py`: NewsAgent - FunctionAgent 封装 (多轮对话+异步进度流式输出)
 - `progress.py`: 工具进度跟踪模块 (asyncio.Queue 实时推送)
 - `cli.py`: 命令行交互界面 (支持多轮对话)
@@ -274,7 +278,7 @@ Agent 配备 4 个工具，根据用户意图自动选择：
 复杂问题 → 可以组合多个工具
 ```
 
-#### 4.3 news_query 工具 (`tools.py`)
+#### 4.3 news_query 工具 (`tools_query.py`)
 
 核心搜索工具，包含两层 LLM 调用：意图分析 + 结果评估。
 

@@ -18,7 +18,7 @@ from workflows.handler import WorkflowHandler
 
 from src.agent.progress import ProgressTracker, set_progress_tracker
 from src.agent.session import ChatSession
-from src.agent.tools import create_news_query_function_tool
+from src.agent.tools_query import create_news_query_function_tool
 from src.agent.tools_trend import create_trend_analysis_tool
 from src.agent.tools_compare import create_compare_articles_tool
 from src.agent.tools_research import create_deep_research_tool

@@ -3,19 +3,19 @@ Run the article indexer to index crawled articles into OpenSearch.
 
 Usage:
     # Index all pending articles
-    python -m examples.run_indexer
+    python -m scripts.run_indexer
 
     # Index a single JSON file
-    python -m examples.run_indexer --file articles/tech/2026-01-25/article.json
+    python -m scripts.run_indexer --file articles/tech/2026-01-25/article.json
 
     # Index with retry of failed files
-    python -m examples.run_indexer --retry-failed
+    python -m scripts.run_indexer --retry-failed
 
     # Index specific category
-    python -m examples.run_indexer --category tech
+    python -m scripts.run_indexer --category tech
 
     # Dry run (show pending files without indexing)
-    python -m examples.run_indexer --dry-run
+    python -m scripts.run_indexer --dry-run
 """
 
 import argparse

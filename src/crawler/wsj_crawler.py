@@ -62,7 +62,7 @@ PAGES_TO_CRAWL = {
 }
 
 ARCHIVE_URL_TEMPLATE = "https://www.wsj.com/news/archive/{year}/{month:02d}/{day:02d}"
-BACKFILL_MAX_DAYS = 30
+BACKFILL_MAX_DAYS = 7
 
 MAX_ARTICLES_PER_PAGE = 50
 MAX_ARTICLES_HOME = 100
