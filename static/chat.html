@@ -779,7 +779,7 @@
                                     contentDiv.innerHTML = marked.parse(final);
                                     lastMessageId = event.message_id || null;
                                     if (lastMessageId) {
-                                        wrapper.appendChild(createFeedbackButtons(lastMessageId));
+                                        wrapper.appendChild(createActionButtons(lastMessageId, final));
                                     }
                                     scrollToBottom();
                                     break;
@@ -835,7 +835,7 @@
                     localStorage.setItem('wsj_session_id', sessionId);
                 }
                 if (data.message_id) {
-                    wrapper.appendChild(createFeedbackButtons(data.message_id));
+                    wrapper.appendChild(createActionButtons(data.message_id, data.response));
                 }
 
             } catch (error) {
@@ -870,32 +870,72 @@
             }
         }
 
-        function createFeedbackButtons(messageId) {
+        function createActionButtons(messageId, rawMarkdown) {
             const container = document.createElement('div');
-            container.style.cssText = 'display:flex;gap:8px;margin-top:4px;padding:2px 0;';
+            container.style.cssText = 'display:flex;gap:8px;margin-top:4px;padding:2px 0;align-items:center;';
+
+            const btnStyle = 'background:none;border:1px solid #e0e0e0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;transition:all 0.2s;';
 
             const thumbUp = document.createElement('button');
             thumbUp.innerHTML = '&#128077;';
             thumbUp.title = '有帮助';
-            thumbUp.style.cssText = 'background:none;border:1px solid #e0e0e0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;transition:all 0.2s;';
+            thumbUp.style.cssText = btnStyle;
             thumbUp.onmouseover = () => thumbUp.style.background = '#e8f5e9';
             thumbUp.onmouseout = () => thumbUp.style.background = 'none';
-            thumbUp.onclick = () => submitFeedback(messageId, 5, container);
+            thumbUp.onclick = () => {
+                submitFeedback(messageId, 5);
+                thumbUp.style.cssText = btnStyle + 'background:#e8f5e9;border-color:#a5d6a7;';
+                thumbUp.onclick = null;
+                thumbDown.style.opacity = '0.4';
+                thumbDown.onclick = null;
+            };
 
             const thumbDown = document.createElement('button');
             thumbDown.innerHTML = '&#128078;';
             thumbDown.title = '需要改进';
-            thumbDown.style.cssText = 'background:none;border:1px solid #e0e0e0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;transition:all 0.2s;';
+            thumbDown.style.cssText = btnStyle;
             thumbDown.onmouseover = () => thumbDown.style.background = '#ffebee';
             thumbDown.onmouseout = () => thumbDown.style.background = 'none';
-            thumbDown.onclick = () => submitFeedback(messageId, 2, container);
+            thumbDown.onclick = () => {
+                submitFeedback(messageId, 2);
+                thumbDown.style.cssText = btnStyle + 'background:#ffebee;border-color:#ef9a9a;';
+                thumbDown.onclick = null;
+                thumbUp.style.opacity = '0.4';
+                thumbUp.onclick = null;
+            };
+
+            const downloadBtn = document.createElement('button');
+            downloadBtn.innerHTML = '&#11015; MD';
+            downloadBtn.title = '下载 Markdown';
+            downloadBtn.style.cssText = btnStyle + 'font-size:12px;margin-left:auto;color:#64748b;';
+            downloadBtn.onmouseover = () => downloadBtn.style.background = '#f1f5f9';
+            downloadBtn.onmouseout = () => downloadBtn.style.background = 'none';
+            downloadBtn.onclick = () => downloadMarkdown(rawMarkdown);
 
             container.appendChild(thumbUp);
             container.appendChild(thumbDown);
+            container.appendChild(downloadBtn);
             return container;
         }
 
-        async function submitFeedback(messageId, rating, container) {
+        function downloadMarkdown(content) {
+            const now = new Date();
+            const ts = now.getFullYear()
+                + String(now.getMonth()+1).padStart(2,'0')
+                + String(now.getDate()).padStart(2,'0')
+                + '_' + String(now.getHours()).padStart(2,'0')
+                + String(now.getMinutes()).padStart(2,'0');
+            const filename = `wsj-news-${ts}.md`;
+            const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        async function submitFeedback(messageId, rating) {
             try {
                 await fetch('/chat/feedback', {
                     method: 'POST',
@@ -906,7 +946,6 @@
                         rating: rating,
                     })
                 });
-                container.innerHTML = `<span style="font-size:12px;color:#999;">反馈已提交 ${rating >= 4 ? '&#128077;' : '&#128078;'}</span>`;
             } catch (e) {
                 console.error('Feedback failed:', e);
             }
