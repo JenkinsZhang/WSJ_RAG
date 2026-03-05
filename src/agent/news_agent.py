@@ -336,8 +336,10 @@ class NewsAgent:
             """Read Agent workflow events → unified queue."""
             try:
                 current_tool_call = None
+                tool_returned_direct = False
                 async for event in handler.stream_events():
                     event_type = type(event).__name__
+                    logger.debug(f"[stream] event: {event_type}")
 
                     if event_type == "AgentInput":
                         await unified_queue.put({
@@ -348,7 +350,9 @@ class NewsAgent:
                         pass
                     elif event_type == "AgentStream":
                         if hasattr(event, "delta") and event.delta:
-                            await unified_queue.put({"type": "delta", "content": event.delta})
+                            # Only yield deltas that are actual text (not tool call tokens)
+                            if not tool_returned_direct:
+                                await unified_queue.put({"type": "delta", "content": event.delta})
                     elif event_type == "ToolCall":
                         tool_name = getattr(event, "tool_name", "unknown")
                         tool_args = getattr(event, "tool_kwargs", {})
@@ -362,6 +366,18 @@ class NewsAgent:
                     elif event_type == "ToolCallResult":
                         tool_name = getattr(event, "tool_name", current_tool_call or "unknown")
                         raw_output = str(getattr(event, "tool_output", ""))
+                        # Check if this tool has return_direct
+                        return_direct = getattr(event, "return_direct", False)
+                        logger.info(
+                            f"[stream] ToolCallResult: tool={tool_name}, "
+                            f"return_direct={return_direct}, output_len={len(raw_output)}"
+                        )
+                        if return_direct and raw_output:
+                            tool_returned_direct = True
+                            await unified_queue.put({
+                                "type": "_return_direct",
+                                "response": raw_output,
+                            })
                         await unified_queue.put({
                             "type": "step", "step": "tool_result",
                             "tool": tool_name,
@@ -369,11 +385,14 @@ class NewsAgent:
                             "result_preview": raw_output[:500] + ("..." if len(raw_output) > 500 else ""),
                         })
                     elif event_type == "AgentOutput":
-                        if hasattr(event, "response"):
-                            await unified_queue.put({"type": "_agent_output", "response": str(event.response)})
+                        response = str(getattr(event, "response", ""))
+                        logger.info(f"[stream] AgentOutput: len={len(response)}, tool_returned_direct={tool_returned_direct}")
+                        if not tool_returned_direct and response:
+                            await unified_queue.put({"type": "_agent_output", "response": response})
                     else:
-                        logger.debug(f"Unknown event type: {event_type}")
+                        logger.debug(f"[stream] Unknown event: {event_type}")
             except Exception as e:
+                logger.error(f"[stream] Producer error: {e}")
                 await unified_queue.put({"type": "error", "content": str(e)})
             finally:
                 await unified_queue.put(_SENTINEL)
@@ -406,7 +425,7 @@ class NewsAgent:
             progress_task = asyncio.create_task(_progress_forwarder())
 
             final_response = ""
-            has_streamed_deltas = False
+            streamed_to_client = False
 
             # Single consumer loop
             while True:
@@ -417,17 +436,26 @@ class NewsAgent:
 
                 event_type = event.get("type")
                 if event_type == "delta":
-                    has_streamed_deltas = True
+                    streamed_to_client = True
                     final_response += event["content"]
                     yield event
+                elif event_type == "_return_direct":
+                    # return_direct tool output — simulate streaming immediately
+                    response_text = event["response"]
+                    logger.info(f"[stream] Simulating stream for return_direct ({len(response_text)} chars)")
+                    for chunk in _chunk_text_for_stream(response_text):
+                        yield {"type": "delta", "content": chunk}
+                        await asyncio.sleep(0.01)
+                    final_response = response_text
+                    streamed_to_client = True
                 elif event_type == "_agent_output":
                     response_text = event["response"]
-                    if not has_streamed_deltas and response_text:
-                        # return_direct tool: simulate streaming by chunking output
-                        logger.debug(f"Simulating stream for return_direct output ({len(response_text)} chars)")
+                    if not streamed_to_client and response_text:
+                        logger.info(f"[stream] Simulating stream for agent output ({len(response_text)} chars)")
                         for chunk in _chunk_text_for_stream(response_text):
                             yield {"type": "delta", "content": chunk}
                             await asyncio.sleep(0.01)
+                        streamed_to_client = True
                     final_response = response_text
                 elif event_type == "error":
                     yield event
@@ -447,6 +475,13 @@ class NewsAgent:
             result = await handler
             if hasattr(result, "response") and not final_response:
                 final_response = str(result.response)
+
+            # Safety net: if we have content but never streamed it
+            if final_response and not streamed_to_client:
+                logger.info(f"[stream] Safety net: streaming undelivered response ({len(final_response)} chars)")
+                for chunk in _chunk_text_for_stream(final_response):
+                    yield {"type": "delta", "content": chunk}
+                    await asyncio.sleep(0.01)
 
             # Record in session
             if session:
