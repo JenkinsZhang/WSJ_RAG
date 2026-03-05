@@ -333,10 +333,21 @@ class NewsAgent:
         _SENTINEL = object()
 
         async def _agent_stream_producer(handler: WorkflowHandler):
-            """Read Agent workflow events → unified queue."""
+            """Read Agent workflow events → unified queue.
+
+            Delta buffering strategy:
+            - Buffer AgentStream deltas until we know they're real content
+            - On ToolCall: discard buffer (those were function call tokens like "assistant:")
+            - After ToolCallResult (non-return_direct): yield subsequent deltas directly
+            - On AgentOutput with no tool calls: flush buffer as real content
+            """
             try:
                 current_tool_call = None
                 tool_returned_direct = False
+                seen_tool_call = False
+                after_tool_result = False
+                delta_buffer = []  # buffer pre-tool deltas
+
                 async for event in handler.stream_events():
                     event_type = type(event).__name__
                     logger.debug(f"[stream] event: {event_type}")
@@ -350,13 +361,23 @@ class NewsAgent:
                         pass
                     elif event_type == "AgentStream":
                         if hasattr(event, "delta") and event.delta:
-                            # Only yield deltas that are actual text (not tool call tokens)
-                            if not tool_returned_direct:
+                            if not seen_tool_call:
+                                # Before any tool call — buffer (might be junk)
+                                delta_buffer.append(event.delta)
+                            elif after_tool_result and not tool_returned_direct:
+                                # After tool completed, agent generating response
                                 await unified_queue.put({"type": "delta", "content": event.delta})
+                            # else: during tool execution or return_direct — skip
                     elif event_type == "ToolCall":
                         tool_name = getattr(event, "tool_name", "unknown")
                         tool_args = getattr(event, "tool_kwargs", {})
                         current_tool_call = tool_name
+                        seen_tool_call = True
+                        after_tool_result = False
+                        # Discard buffered deltas — they were function call tokens
+                        if delta_buffer:
+                            logger.debug(f"[stream] Discarding {len(delta_buffer)} pre-tool deltas")
+                            delta_buffer.clear()
                         await unified_queue.put({
                             "type": "step", "step": "tool_call",
                             "tool": tool_name,
@@ -366,8 +387,8 @@ class NewsAgent:
                     elif event_type == "ToolCallResult":
                         tool_name = getattr(event, "tool_name", current_tool_call or "unknown")
                         raw_output = str(getattr(event, "tool_output", ""))
-                        # Check if this tool has return_direct
                         return_direct = getattr(event, "return_direct", False)
+                        after_tool_result = True
                         logger.info(
                             f"[stream] ToolCallResult: tool={tool_name}, "
                             f"return_direct={return_direct}, output_len={len(raw_output)}"
@@ -387,7 +408,13 @@ class NewsAgent:
                     elif event_type == "AgentOutput":
                         response = str(getattr(event, "response", ""))
                         logger.info(f"[stream] AgentOutput: len={len(response)}, tool_returned_direct={tool_returned_direct}")
-                        if not tool_returned_direct and response:
+                        # Flush buffered deltas if no tool was called (pure chat response)
+                        if not seen_tool_call and delta_buffer:
+                            logger.debug(f"[stream] Flushing {len(delta_buffer)} buffered deltas (no tool called)")
+                            for d in delta_buffer:
+                                await unified_queue.put({"type": "delta", "content": d})
+                            delta_buffer.clear()
+                        elif not tool_returned_direct and response:
                             await unified_queue.put({"type": "_agent_output", "response": response})
                     else:
                         logger.debug(f"[stream] Unknown event: {event_type}")
