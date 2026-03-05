@@ -23,6 +23,17 @@ from datetime import datetime
 import logging
 import json
 
+# Configure application logging (uvicorn only handles its own loggers)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("opensearch").setLevel(logging.WARNING)
+logging.getLogger("botocore").setLevel(logging.WARNING)
+logging.getLogger("boto3").setLevel(logging.WARNING)
+
 from src.config import get_settings
 from src.models import NewsArticle
 from src.storage.repository import NewsRepository
