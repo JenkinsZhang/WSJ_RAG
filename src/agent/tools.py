@@ -634,7 +634,7 @@ Examples:
 - query("帮我总结一下最近的独家科技新闻")
 - query("Trump政策最新动态", max_results=10)
 
-Always use this tool when the user asks about news, current events, or wants information
-from recent WSJ articles.
+Use this tool when the user wants to find or search for specific recent news articles.
+Do NOT use this tool for general knowledge questions, greetings, or casual conversation.
 """,
     )
