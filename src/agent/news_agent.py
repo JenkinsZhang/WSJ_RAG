@@ -282,127 +282,145 @@ class NewsAgent:
         self, message: str, session: Optional[ChatSession] = None
     ) -> AsyncGenerator[dict, None]:
         """
-        Stream chat with step-by-step events including tool progress.
+        Stream chat with real-time tool progress events.
 
-        Yields events in the format:
-            {"type": "step", "step": "thinking", "content": "..."}
-            {"type": "step", "step": "tool_call", "tool": "news_query", "args": {...}}
-            {"type": "tool_progress", "step": "analyzing", "content": "...", "detail": "..."}
-            {"type": "step", "step": "tool_result", "tool": "news_query", "result": "..."}
-            {"type": "delta", "content": "..."}  # Streaming text chunks
-            {"type": "done", "content": "..."}   # Final complete response
+        Architecture: two concurrent async tasks feed a unified output queue.
 
-        Args:
-            message: User's question or request
-            session: Optional chat session for multi-turn conversation
+            Task 1 (_agent_stream_producer):
+                Reads Agent workflow events (ToolCall, AgentStream, etc.)
+                and writes to unified_queue.
 
-        Yields:
-            Event dictionaries with type and content
+            Task 2 (_progress_forwarder):
+                Continuously reads from progress_queue (fed by sync emit_xxx)
+                and writes to unified_queue with 100ms polling.
+
+            chat_stream:
+                Reads from unified_queue and yields to the SSE response.
+
+        This ensures tool progress events are delivered in real-time,
+        not batched until the next Agent workflow event.
         """
         logger.debug(f"User message (stream): {message}")
 
-        # Set up progress tracker with async queue
+        # Progress queue: tools write here via sync emit_xxx() → put_nowait()
         progress_queue: asyncio.Queue = asyncio.Queue()
         tracker = ProgressTracker()
         tracker.set_queue(progress_queue)
         set_progress_tracker(tracker)
 
+        # Unified output queue: single consumer (this method), two producers
+        unified_queue: asyncio.Queue = asyncio.Queue()
+        _SENTINEL = object()
+
+        async def _agent_stream_producer(handler: WorkflowHandler):
+            """Read Agent workflow events → unified queue."""
+            try:
+                current_tool_call = None
+                async for event in handler.stream_events():
+                    event_type = type(event).__name__
+
+                    if event_type == "AgentInput":
+                        await unified_queue.put({
+                            "type": "step", "step": "processing",
+                            "content": "开始处理请求...",
+                        })
+                    elif event_type == "AgentSetup":
+                        pass
+                    elif event_type == "AgentStream":
+                        if hasattr(event, "delta") and event.delta:
+                            await unified_queue.put({"type": "delta", "content": event.delta})
+                    elif event_type == "ToolCall":
+                        tool_name = getattr(event, "tool_name", "unknown")
+                        tool_args = getattr(event, "tool_kwargs", {})
+                        current_tool_call = tool_name
+                        await unified_queue.put({
+                            "type": "step", "step": "tool_call",
+                            "tool": tool_name,
+                            "content": f"调用工具: {tool_name}",
+                            "args": tool_args,
+                        })
+                    elif event_type == "ToolCallResult":
+                        tool_name = getattr(event, "tool_name", current_tool_call or "unknown")
+                        raw_output = str(getattr(event, "tool_output", ""))
+                        await unified_queue.put({
+                            "type": "step", "step": "tool_result",
+                            "tool": tool_name,
+                            "content": f"工具 {tool_name} 返回结果",
+                            "result_preview": raw_output[:500] + ("..." if len(raw_output) > 500 else ""),
+                        })
+                    elif event_type == "AgentOutput":
+                        if hasattr(event, "response"):
+                            await unified_queue.put({"type": "_agent_output", "response": str(event.response)})
+                    else:
+                        logger.debug(f"Unknown event type: {event_type}")
+            except Exception as e:
+                await unified_queue.put({"type": "error", "content": str(e)})
+            finally:
+                await unified_queue.put(_SENTINEL)
+
+        async def _progress_forwarder():
+            """Forward tool progress events → unified queue in real-time."""
+            while True:
+                try:
+                    event = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                    await unified_queue.put(event)
+                except asyncio.TimeoutError:
+                    continue
+                except asyncio.CancelledError:
+                    # Drain remaining before exit
+                    while not progress_queue.empty():
+                        try:
+                            await unified_queue.put(progress_queue.get_nowait())
+                        except asyncio.QueueEmpty:
+                            break
+                    return
+
         try:
-            # Emit thinking step
             yield {"type": "step", "step": "thinking", "content": "正在分析您的问题..."}
 
-            # Create agent with session context and run with streaming
             agent = self._create_agent(session)
             handler: WorkflowHandler = agent.run(user_msg=message)
 
+            # Launch two concurrent producers
+            agent_task = asyncio.create_task(_agent_stream_producer(handler))
+            progress_task = asyncio.create_task(_progress_forwarder())
+
             final_response = ""
-            current_tool_call = None
 
-            async for event in handler.stream_events():
-                # First, check for any tool progress events
-                while not progress_queue.empty():
-                    try:
-                        progress_event = progress_queue.get_nowait()
-                        yield progress_event
-                    except asyncio.QueueEmpty:
-                        break
+            # Single consumer loop
+            while True:
+                event = await unified_queue.get()
 
-                event_type = type(event).__name__
+                if event is _SENTINEL:
+                    break
 
-                # Handle different event types
-                if event_type == "AgentInput":
-                    # Initial input received
-                    yield {
-                        "type": "step",
-                        "step": "processing",
-                        "content": "开始处理请求...",
-                    }
-
-                elif event_type == "AgentSetup":
-                    # Agent setup complete
-                    pass
-
-                elif event_type == "AgentStream":
-                    # Streaming token
-                    if hasattr(event, "delta") and event.delta:
-                        final_response += event.delta
-                        yield {"type": "delta", "content": event.delta}
-
-                elif event_type == "ToolCall":
-                    # Tool is being called
-                    tool_name = getattr(event, "tool_name", "unknown")
-                    tool_args = getattr(event, "tool_kwargs", {})
-                    current_tool_call = tool_name
-                    yield {
-                        "type": "step",
-                        "step": "tool_call",
-                        "tool": tool_name,
-                        "content": f"调用工具: {tool_name}",
-                        "args": tool_args,
-                    }
-
-                elif event_type == "ToolCallResult":
-                    # Drain any remaining progress events before showing result
-                    while not progress_queue.empty():
-                        try:
-                            progress_event = progress_queue.get_nowait()
-                            yield progress_event
-                        except asyncio.QueueEmpty:
-                            break
-
-                    # Tool returned result
-                    tool_name = getattr(
-                        event, "tool_name", current_tool_call or "unknown"
-                    )
-                    result_preview = str(getattr(event, "tool_output", ""))[:500]
-                    yield {
-                        "type": "step",
-                        "step": "tool_result",
-                        "tool": tool_name,
-                        "content": f"工具 {tool_name} 返回结果",
-                        "result_preview": result_preview
-                        + (
-                            "..."
-                            if len(str(getattr(event, "tool_output", ""))) > 500
-                            else ""
-                        ),
-                    }
-
-                elif event_type == "AgentOutput":
-                    # Final output
-                    if hasattr(event, "response"):
-                        final_response = str(event.response)
-
+                event_type = event.get("type")
+                if event_type == "delta":
+                    final_response += event["content"]
+                    yield event
+                elif event_type == "_agent_output":
+                    final_response = event["response"]
+                    # Internal event, don't yield to client
+                elif event_type == "error":
+                    yield event
+                    break
                 else:
-                    # Log unknown events for debugging
-                    logger.debug(f"Unknown event type: {event_type}, event: {event}")
+                    yield event
 
-            # Get final result if streaming didn't capture it
+            # Shut down progress forwarder
+            progress_task.cancel()
+            try:
+                await progress_task
+            except asyncio.CancelledError:
+                pass
+
+            # Ensure agent task completes and get final result
+            await agent_task
             result = await handler
             if hasattr(result, "response") and not final_response:
                 final_response = str(result.response)
 
-            # Record messages in session and yield done event
+            # Record in session
             if session:
                 session.add_message("user", message)
                 msg = session.add_message("assistant", final_response)
@@ -414,7 +432,6 @@ class NewsAgent:
             logger.error(f"Agent stream failed: {e}")
             yield {"type": "error", "content": str(e)}
         finally:
-            # Clean up progress tracker
             set_progress_tracker(None)
 
 
