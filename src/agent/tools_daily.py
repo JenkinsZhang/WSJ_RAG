@@ -310,13 +310,13 @@ class DailyBriefingTool:
 
         logger.info(
             f"[DailyBriefing] Synthesis prompt: {len(prompt)} chars, "
-            f"{len(category_summaries)} categories, requesting max_tokens=6144"
+            f"{len(category_summaries)} categories, requesting max_tokens=32000"
         )
         emit_summarizing("正在生成完整报告，预计需要 30-60 秒...", None)
 
         try:
             report = self.llm_service.generate(
-                prompt, max_tokens=6144, temperature=0.4
+                prompt, max_tokens=32000, temperature=0.4
             )
             logger.info(f"[DailyBriefing] Synthesis complete: {len(report)} chars")
             emit_summarizing("报告生成完成", None)

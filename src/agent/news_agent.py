@@ -140,6 +140,20 @@ def _generate_system_prompt() -> str:
     )
 
 
+def _chunk_text_for_stream(text: str, chunk_size: int = 20) -> list[str]:
+    """Split text into small chunks for simulated streaming.
+
+    Splits on newlines and then by chunk_size to produce
+    natural-looking streaming output.
+    """
+    chunks = []
+    for line in text.split("\n"):
+        line_with_newline = line + "\n"
+        for i in range(0, len(line_with_newline), chunk_size):
+            chunks.append(line_with_newline[i:i + chunk_size])
+    return chunks
+
+
 class NewsAgent:
     """
     LlamaIndex-based agent for news Q&A.
@@ -177,7 +191,7 @@ class NewsAgent:
         return BedrockConverse(
             model=self.model_id,
             region_name=settings.llm.region_name,
-            max_tokens=8192,  # High limit for daily briefing and detailed Chinese responses
+            max_tokens=32000,  # High limit for daily briefing and detailed responses
             temperature=0.7,
         )
 
@@ -392,6 +406,7 @@ class NewsAgent:
             progress_task = asyncio.create_task(_progress_forwarder())
 
             final_response = ""
+            has_streamed_deltas = False
 
             # Single consumer loop
             while True:
@@ -402,11 +417,18 @@ class NewsAgent:
 
                 event_type = event.get("type")
                 if event_type == "delta":
+                    has_streamed_deltas = True
                     final_response += event["content"]
                     yield event
                 elif event_type == "_agent_output":
-                    final_response = event["response"]
-                    # Internal event, don't yield to client
+                    response_text = event["response"]
+                    if not has_streamed_deltas and response_text:
+                        # return_direct tool: simulate streaming by chunking output
+                        logger.debug(f"Simulating stream for return_direct output ({len(response_text)} chars)")
+                        for chunk in _chunk_text_for_stream(response_text):
+                            yield {"type": "delta", "content": chunk}
+                            await asyncio.sleep(0.01)
+                    final_response = response_text
                 elif event_type == "error":
                     yield event
                     break
